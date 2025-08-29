@@ -119,7 +119,7 @@ class SdkHelpers(object):
 
     @staticmethod
     def getSdks(builder):
-        sdk_manifest_dir = os.path.join(builder.sourcePath, 'hl2sdk-manifests',
+        sdk_manifest_dir = os.path.join(builder.sourcePath + '/../', 'hl2sdk-manifests',
                                         'manifests')
 
         out = []
