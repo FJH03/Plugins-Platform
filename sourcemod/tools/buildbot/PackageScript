@@ -1,0 +1,143 @@
+# vim: set ts=8 sts=2 sw=2 tw=99 et ft=python:
+import os
+import re
+
+builder.SetBuildFolder('package')
+
+folder_list = [
+  'addons/sourcemod',
+  'addons/sourcemod/bin',
+  'addons/sourcemod/plugins',
+  'addons/sourcemod/plugins/disabled',
+  'addons/sourcemod/gamedata',
+  'addons/sourcemod/gamedata/core.games',
+  'addons/sourcemod/gamedata/sdkhooks.games',
+  'addons/sourcemod/gamedata/sdktools.games',
+  'addons/sourcemod/gamedata/sm-cstrike.games',
+  'addons/sourcemod/configs',
+  'addons/sourcemod/configs/geoip',
+  'addons/sourcemod/translations',
+  'addons/sourcemod/logs',
+  'addons/sourcemod/extensions',
+  'addons/sourcemod/data',
+  'addons/sourcemod/configs/sql-init-scripts',
+  'addons/sourcemod/configs/sql-init-scripts/mysql',
+  'addons/sourcemod/configs/sql-init-scripts/pgsql',
+  'addons/sourcemod/configs/sql-init-scripts/sqlite',
+  'addons/sourcemod/scripting',
+  'addons/sourcemod/scripting/include',
+  'addons/sourcemod/scripting/admin-flatfile',
+  'addons/sourcemod/scripting/adminmenu',
+  'addons/sourcemod/scripting/testsuite',
+  'addons/sourcemod/scripting/basecommands',
+  'addons/sourcemod/scripting/basecomm',
+  'addons/sourcemod/scripting/funvotes',
+  'addons/sourcemod/scripting/basevotes',
+  'addons/sourcemod/scripting/basebans',
+  'addons/sourcemod/scripting/funcommands',
+  'addons/sourcemod/scripting/playercommands',
+  'addons/metamod',
+  'cfg/sourcemod',
+]
+
+if 'x86_64' in SM.target_archs:
+  folder_list.extend([
+    'addons/sourcemod/bin/x64',
+    'addons/sourcemod/extensions/x64',
+  ])
+
+helpers = SM.package_helpers
+helpers.builder = builder
+folder_map = helpers.CreateFolders(folder_list)
+
+# Copy binaries.
+for cxx_task in SM.binaries:
+  # mms expects our loader (sourcemod_mm) to exist in /bin/
+  if cxx_task.target.arch == 'x86_64' and not 'sourcemod_mm' in cxx_task.binary.path:
+    builder.AddCopy(cxx_task.binary, folder_map['addons/sourcemod/bin/x64'])
+  else:
+    builder.AddCopy(cxx_task.binary, folder_map['addons/sourcemod/bin'])
+for cxx_task in SM.extensions:
+  if cxx_task.target.arch == 'x86_64':
+    builder.AddCopy(cxx_task.binary, folder_map['addons/sourcemod/extensions/x64'])
+  else:
+    builder.AddCopy(cxx_task.binary, folder_map['addons/sourcemod/extensions'])
+for cxx_task in SM.spvm:
+  if cxx_task.target.arch == 'x86':
+    dest_path = os.path.join('addons/sourcemod/bin',
+                             'sourcepawn.jit.x86' + os.path.splitext(cxx_task.binary.path)[1])
+    builder.AddCopy(cxx_task.binary, dest_path)
+  elif cxx_task.target.arch == 'x86_64':
+    dest_path = os.path.join('addons/sourcemod/bin/x64',
+                             'sourcepawn.vm' + os.path.splitext(cxx_task.binary.path)[1])
+    builder.AddCopy(cxx_task.binary, dest_path)
+
+helpers.CopySpcomp('addons/sourcemod/scripting')
+
+# Export PDB files. We write to a file in the build folder which is pretty
+# verboten, but it's okay if it's in the root since AMBuild will never try
+# to rmdir the root.
+full_binary_list = SM.binaries + SM.extensions + SM.spvm + SM.spcomp_bins
+with open(os.path.join(builder.buildPath, 'pdblog.txt'), 'w') as fp:
+  for task in full_binary_list:
+    fp.write(task.debug.path + '\n')
+
+# Copy plugins.
+disabled_plugins = set([
+  'admin-sql-prefetch.smx',
+  'admin-sql-threaded.smx',
+  'sql-admin-manager.smx',
+  'mapchooser.smx',
+  'randomcycle.smx',
+  'rockthevote.smx',
+  'nominations.smx',
+])
+
+for smx_file in SM.smx_files:
+  smx_entry = SM.smx_files[smx_file]
+  if smx_file in disabled_plugins:
+    builder.AddCopy(smx_entry, folder_map['addons/sourcemod/plugins/disabled'])
+  else:
+    builder.AddCopy(smx_entry, folder_map['addons/sourcemod/plugins'])
+
+# Do all straight-up file copies from the source tree.
+helpers.CopyIncludes('addons/sourcemod/scripting/include')
+
+helpers.CopyFiles('configs', 'addons/sourcemod/configs')
+helpers.CopyFiles('configs/cfg', 'cfg/sourcemod')
+helpers.CopyFiles('configs/metamod', 'addons/metamod')
+helpers.CopyFiles('configs/sql-init-scripts/mysql', 'addons/sourcemod/configs/sql-init-scripts/mysql')
+helpers.CopyFiles('configs/sql-init-scripts/pgsql', 'addons/sourcemod/configs/sql-init-scripts/pgsql')
+helpers.CopyFiles('configs/sql-init-scripts/sqlite', 'addons/sourcemod/configs/sql-init-scripts/sqlite')
+helpers.CopyFiles('gamedata', 'addons/sourcemod/gamedata')
+helpers.CopyFiles('gamedata/sdkhooks.games', 'addons/sourcemod/gamedata/sdkhooks.games')
+helpers.CopyFiles('gamedata/sdktools.games', 'addons/sourcemod/gamedata/sdktools.games')
+helpers.CopyFiles('gamedata/core.games', 'addons/sourcemod/gamedata/core.games')
+helpers.CopyFiles('gamedata/sm-cstrike.games', 'addons/sourcemod/gamedata/sm-cstrike.games')
+helpers.CopyFiles('plugins', 'addons/sourcemod/scripting', '.sp')
+helpers.CopyFiles('translations', 'addons/sourcemod/translations')
+helpers.CopyFiles('licenses', 'addons/sourcemod')
+helpers.CopyFiles('plugins/admin-flatfile', 'addons/sourcemod/scripting/admin-flatfile')
+helpers.CopyFiles('plugins/adminmenu', 'addons/sourcemod/scripting/adminmenu')
+helpers.CopyFiles('plugins/testsuite', 'addons/sourcemod/scripting/testsuite')
+helpers.CopyFiles('plugins/basecommands', 'addons/sourcemod/scripting/basecommands')
+helpers.CopyFiles('plugins/basecomm', 'addons/sourcemod/scripting/basecomm')
+helpers.CopyFiles('plugins/funvotes', 'addons/sourcemod/scripting/funvotes')
+helpers.CopyFiles('plugins/basevotes', 'addons/sourcemod/scripting/basevotes')
+helpers.CopyFiles('plugins/basebans', 'addons/sourcemod/scripting/basebans')
+helpers.CopyFiles('plugins/funcommands', 'addons/sourcemod/scripting/funcommands')
+helpers.CopyFiles('plugins/playercommands', 'addons/sourcemod/scripting/playercommands')
+
+with open(os.path.join(builder.sourcePath, 'configs/languages.cfg'), 'r') as f:
+  language_re = re.compile(r'^\s*"([^"]+)"\s+"[^"]+"')
+  added_languages = set(["en"])
+  for line in f.read().splitlines():
+    match = language_re.match(line)
+    if match:
+      lang_code = match.group(1)
+      if lang_code in added_languages:
+        continue
+      output_path = os.path.join('addons/sourcemod/translations', lang_code)
+      helpers.CreateFolders([output_path])
+      helpers.CopyFiles(os.path.join('translations', lang_code), output_path)
+      added_languages.add(lang_code)

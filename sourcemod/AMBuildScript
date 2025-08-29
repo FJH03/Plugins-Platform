@@ -32,7 +32,7 @@ def SetArchFlags(compiler):
     if compiler.target.arch == 'x86_64':
       compiler.defines += ['WIN64']
 
-SdkHelpers = builder.Eval('hl2sdk-manifests/SdkHelpers.ambuild', {
+SdkHelpers = builder.Eval('../hl2sdk-manifests/SdkHelpers.ambuild', {
     'Project': 'sourcemod'
 })
 
