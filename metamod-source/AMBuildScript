@@ -17,7 +17,7 @@ def ResolveEnvPath(env, folder):
       head, tail = os.path.split(head)
   return None
 
-SdkHelpers = builder.Eval('hl2sdk-manifests/SdkHelpers.ambuild', {
+SdkHelpers = builder.Eval('../hl2sdk-manifests/SdkHelpers.ambuild', {
     'Project': 'metamod'
 })
 
