@@ -11,11 +11,6 @@
 
 "Game Master"
 {
-	"game.csgo.txt"
-	{
-		"engine"	"csgo"
-	}
-
 	"game.css.txt"
 	{
 		"game"		"cstrike"

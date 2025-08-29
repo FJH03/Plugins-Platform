@@ -87,9 +87,6 @@ disabled_plugins = set([
   'admin-sql-prefetch.smx',
   'admin-sql-threaded.smx',
   'sql-admin-manager.smx',
-  'mapchooser.smx',
-  'randomcycle.smx',
-  'rockthevote.smx',
   'nominations.smx',
 ])
 

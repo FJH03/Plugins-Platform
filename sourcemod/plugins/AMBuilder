@@ -2,6 +2,7 @@
 import os
 
 files = [
+  'admin-fix.sp',
   'adminhelp.sp',
   'antiflood.sp',
   'basecomm.sp',

@@ -94,7 +94,7 @@ static void ReplyVersion(edict_t *client = nullptr)
 	}
 	CMDMSG(client, "    Compiled on: %s\n", MMS_BUILD_TIMESTAMP);
 #if defined(MMS_GENERATED_BUILD)
-	CMDMSG(client, "    Built from: https://github.com/alliedmodders/metamod-source/commit/%s\n", METAMOD_SHA);
+	CMDMSG(client, "    Built from: https://github.com/FJH03/Plugins-Platform-For-CS-CZS/commit/%s\n", METAMOD_SHA);
 	CMDMSG(client, "    Build ID: %s:%s\n", METAMOD_LOCAL_REV, METAMOD_SHA);
 #endif
 	CMDMSG(client, "    http://www.metamodsource.net/\n");
