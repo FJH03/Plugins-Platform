@@ -18,13 +18,16 @@
 #
 import os
 
+# Current layout: third_party/googletest (sibling of amtl)
+gtest_root = os.path.join(builder.sourcePath, '..', 'googletest')
+
 binary = KE.StaticLibrary(builder, 'libgtest')
 binary.compiler.includes += [
-  os.path.join(builder.sourcePath, 'third_party', 'googletest', 'googletest', 'include'),
-  os.path.join(builder.sourcePath, 'third_party', 'googletest', 'googletest'),
+  os.path.join(gtest_root, 'googletest', 'include'),
+  os.path.join(gtest_root, 'googletest'),
 ]
 binary.sources += [
-  os.path.join('..', 'third_party', 'googletest', 'googletest', 'src', 'gtest-all.cc'),
+  os.path.join(gtest_root, 'googletest', 'src', 'gtest-all.cc'),
 ]
 libgtest = builder.Add(binary)
 
@@ -32,7 +35,7 @@ binary = KE.Program(builder, 'testrunner')
 compiler = binary.compiler
 compiler.includes += [
   os.path.join(builder.sourcePath),
-  os.path.join(builder.sourcePath, 'third_party', 'googletest', 'googletest', 'include'),
+  os.path.join(gtest_root, 'googletest', 'include'),
 ]
 
 if compiler.like('msvc'):
