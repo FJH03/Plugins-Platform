@@ -43,11 +43,14 @@ def get_git_version():
   revision_hash = run_and_return(['git', 'log', '--pretty=format:%h:%H', '-n', '1'])
   shorthash, longhash = revision_hash.split(':')
 
-  return revision_count, shorthash, longhash
+  # May return "HEAD" when building from a detached HEAD.
+  branch = run_and_return(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+
+  return revision_count, shorthash, longhash, branch
 
 def output_version_header():
   with FolderChanger(SourceFolder):
-    count, shorthash, longhash = get_git_version()
+    count, shorthash, longhash, branch = get_git_version()
 
   with open(os.path.join(SourceFolder, 'product.version')) as fp:
     contents = fp.read()
@@ -69,6 +72,7 @@ def output_version_header():
 
 #define MMS_BUILD_TAG		\"{0}\"
 #define MMS_BUILD_CSET		\"{1}\"
+#define MMS_BUILD_BRANCH	\"{7}\"
 #define MMS_BUILD_MAJOR		\"{2}\"
 #define MMS_BUILD_MINOR		\"{3}\"
 #define MMS_BUILD_RELEASE	\"{4}\"
@@ -80,7 +84,7 @@ def output_version_header():
 #define MMS_VERSION_FILE	{2},{3},{4},0
 
 #endif /* _METAMOD_AUTO_VERSION_INFORMATION_H_ */
-    """.format(tag, shorthash, major, minor, release, fullstring, count))
+  """.format(tag, shorthash, major, minor, release, fullstring, count, branch))
 
 output_version_header()
 

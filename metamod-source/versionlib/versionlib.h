@@ -30,6 +30,7 @@
 // versionlib does not use versionlib.
 # undef METAMOD_LOCAL_REV
 # undef METAMOD_CSET
+# undef METAMOD_BRANCH
 # undef METAMOD_VERSION
 # undef METAMOD_BUILD_TIME
 #endif
@@ -41,6 +42,7 @@
 #endif
 EXTERN_C const char *METAMOD_LOCAL_REV;
 EXTERN_C const char *METAMOD_SHA;
+EXTERN_C const char *METAMOD_BRANCH;
 EXTERN_C const char *METAMOD_VERSION;
 EXTERN_C const char *METAMOD_BUILD_TIME;
 
