@@ -43,11 +43,14 @@ def get_git_version():
   revision_hash = run_and_return(['git', 'log', '--pretty=format:%h:%H', '-n', '1'])
   shorthash, longhash = revision_hash.split(':')
 
-  return revision_count, shorthash, longhash
+  # Note: this returns "HEAD" for detached HEAD.
+  branch = run_and_return(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+
+  return revision_count, shorthash, longhash, branch
 
 def output_version_headers():
   with FolderChanger(SourceFolder):
-    count, shorthash, longhash = get_git_version()
+    count, shorthash, longhash, branch = get_git_version()
 
   with open(os.path.join(SourceFolder, 'product.version')) as fp:
     contents = fp.read().strip()
@@ -67,6 +70,7 @@ def output_version_headers():
 
 #define SM_BUILD_TAG		\"{0}\"
 #define SM_BUILD_CSET		\"{1}\"
+#define SM_BUILD_BRANCH		\"{7}\"
 #define SM_BUILD_MAJOR		\"{2}\"
 #define SM_BUILD_MINOR		\"{3}\"
 #define SM_BUILD_RELEASE	\"{4}\"
@@ -78,7 +82,7 @@ def output_version_headers():
 #define SM_VERSION_FILE		{2},{3},{4},{6}
 
 #endif /* _SOURCEMOD_AUTO_VERSION_INFORMATION_H_ */
-    """.format(tag, shorthash, major, minor, release, fullstring, count))
+  """.format(tag, shorthash, major, minor, release, fullstring, count, branch))
 
   with open(os.path.join(OutputFolder, 'version_auto.inc'), 'w') as fp:
     fp.write("""

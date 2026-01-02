@@ -218,6 +218,11 @@ class SMConfig(object):
     ]
     cxx.includes += [
       os.path.join(builder.sourcePath, 'public'),
+      # Support both styles used in the tree:
+      #   #include <am-string.h>
+      #   #include <amtl/am-string.h>
+      os.path.join(builder.sourcePath, '..', 'third_party', 'amtl', 'amtl'),
+      os.path.join(builder.sourcePath, '..', 'third_party', 'amtl'),
     ]
     if self.use_auto_versioning():
       cxx.defines += ['SM_GENERATED_BUILD']
@@ -406,13 +411,28 @@ class SMConfig(object):
 
   def add_libamtl(self):
     # Add libamtl.
+    #
+    # Note: We cannot builder.Build("../third_party/.../AMBuilder") because AMBuild 2.2
+    # disallows generating build folders outside the configured build root.
+    # Instead, compile the same amtl sources directly but keep outputs inside this build.
     self.libamtl = {}
+
+    amtl_root = os.path.abspath(os.path.join(builder.sourcePath, '..', 'third_party', 'amtl'))
+    amtl_src = os.path.join(amtl_root, 'amtl')
+
     for cxx in self.all_targets:
-      def get_configure_fn(cxx):
-        return lambda builder, name: self.StaticLibrary(builder, cxx, name)
-      extra_vars = {'Configure': get_configure_fn(cxx)}
-      libamtl = builder.Build('public/amtl/amtl/AMBuilder', extra_vars)
-      self.libamtl[cxx.target.arch] = libamtl.binary
+      binary = self.StaticLibrary(builder, cxx, 'libamtl')
+
+      binary.compiler.cxxincludes += [
+        amtl_root,
+      ]
+
+      binary.sources += [
+        os.path.join(amtl_src, 'experimental', 'am-argparser.cpp'),
+      ]
+
+      node = builder.Add(binary)
+      self.libamtl[cxx.target.arch] = node.binary
 
   def AddVersioning(self, binary):
     if binary.compiler.target.platform == 'windows':

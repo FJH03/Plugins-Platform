@@ -34,6 +34,7 @@
 // versionlib does not use versionlib.
 # undef SOURCEMOD_LOCAL_REV
 # undef SOURCEMOD_CSET
+# undef SOURCEMOD_BRANCH
 # undef SOURCEMOD_VERSION
 # undef SOURCEMOD_BUILD_TIME
 #endif
@@ -45,6 +46,7 @@
 #endif
 EXTERN_C const char *SOURCEMOD_LOCAL_REV;
 EXTERN_C const char *SOURCEMOD_SHA;
+EXTERN_C const char *SOURCEMOD_BRANCH;
 EXTERN_C const char *SOURCEMOD_VERSION;
 EXTERN_C const char *SOURCEMOD_BUILD_TIME;
 

@@ -242,7 +242,8 @@ void RootConsoleMenu::OnRootConsoleCommand(const char *cmdname, const ICommandAr
 		ConsolePrint("    SourcePawn API: v1 = %d, v2 = %d", g_pSourcePawn->GetEngineAPIVersion(), g_pSourcePawn2->GetAPIVersion());
 		ConsolePrint("    Compiled on: %s", SOURCEMOD_BUILD_TIME);
 #if defined(SM_GENERATED_BUILD)
-		ConsolePrint("    Built from: https://github.com/FJH03/Plugins-Platform-For-CS-CZS/commit/%s", SOURCEMOD_SHA);
+		ConsolePrint("    Built from: https://github.com/FJH03/Plugins-Platform/commit/%s", SOURCEMOD_SHA);
+		ConsolePrint("    Branch: %s", SOURCEMOD_BRANCH);
 		ConsolePrint("    Build ID: %s:%s", SOURCEMOD_LOCAL_REV, SOURCEMOD_SHA);
 #endif
 		ConsolePrint("    http://www.sourcemod.net/");
