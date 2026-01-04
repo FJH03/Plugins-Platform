@@ -724,11 +724,10 @@ static cell_t GetEntDataEnt2(IPluginContext *pContext, const cell_t *params)
 
 static cell_t LoadEntityFromHandleAddress(IPluginContext *pContext, const cell_t *params)
 {
-#ifdef PLATFORM_X86
 	void *addr = reinterpret_cast<void*>(params[1]);
-#else
-	void *addr = g_SourceMod.FromPseudoAddress(params[1]);
-#endif
+	if (pContext->GetRuntime()->FindPubvarByName("__Virtual_Address__", nullptr) == SP_ERROR_NONE) {
+		addr = g_SourceMod.FromPseudoAddress(params[1]);
+	}
 
 	if (addr == NULL)
 	{
@@ -736,7 +735,7 @@ static cell_t LoadEntityFromHandleAddress(IPluginContext *pContext, const cell_t
 	}
 	else if (reinterpret_cast<uintptr_t>(addr) < VALID_MINIMUM_MEMORY_ADDRESS)
 	{
-		return pContext->ThrowNativeError("Invalid address 0x%x is pointing to reserved memory.", addr);
+		return pContext->ThrowNativeError("Invalid address %p is pointing to reserved memory.", addr);
 	}
 
 	CBaseHandle &hndl = *reinterpret_cast<CBaseHandle*>(addr);
@@ -835,11 +834,10 @@ static cell_t SetEntDataEnt2(IPluginContext *pContext, const cell_t *params)
 
 static cell_t StoreEntityToHandleAddress(IPluginContext *pContext, const cell_t *params)
 {
-#ifdef PLATFORM_X86
 	void *addr = reinterpret_cast<void*>(params[1]);
-#else
-	void *addr = g_SourceMod.FromPseudoAddress(params[1]);
-#endif
+	if (pContext->GetRuntime()->FindPubvarByName("__Virtual_Address__", nullptr) == SP_ERROR_NONE) {
+		addr = g_SourceMod.FromPseudoAddress(params[1]);
+	}
 
 	if (addr == NULL)
 	{
@@ -2772,11 +2770,10 @@ static cell_t GetEntityAddress(IPluginContext *pContext, const cell_t *params)
 		return pContext->ThrowNativeError("Entity %d (%d) is invalid", g_HL2.ReferenceToIndex(params[1]), params[1]);
 	}
 
-#ifdef PLATFORM_X86
-	return reinterpret_cast<cell_t>(pEntity);
-#else
-	return g_SourceMod.ToPseudoAddress(pEntity);
-#endif
+	if (pContext->GetRuntime()->FindPubvarByName("__Virtual_Address__", nullptr) == SP_ERROR_NONE) {
+		return g_SourceMod.ToPseudoAddress(pEntity);
+	}
+	return reinterpret_cast<uintptr_t>(pEntity);
 }
 
 REGISTER_NATIVES(entityNatives)

@@ -49,15 +49,19 @@
 	{
 		"#supported"
 		{
-			"engine"			"css"
+			"engine"			"orangebox_valve"
 		}
 		
 		"Offsets"
 		{
 			"GetDataDescMap"
 			{
-				"windows"		"11"			
+				"windows"		"11"
+				"windows64"		"11"
 				"linux"			"12"
+				"linux64"		"12"
+				"mac"			"12"
+				"mac64"			"12"
 			}
 		}
 	}

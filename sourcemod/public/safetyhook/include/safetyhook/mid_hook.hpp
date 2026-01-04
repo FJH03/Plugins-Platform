@@ -56,7 +56,7 @@ public:
             retErr.inline_hook_error = err;
             return retErr;
         }
-	};
+    };
 
     /// @brief Flags for MidHook.
     enum Flags : int {
@@ -81,12 +81,11 @@ public:
     /// @return The MidHook object or a MidHook::Error if an error occurred.
     /// @note This will use the default global Allocator.
     /// @note If you don't care about error handling, use the easy API (safetyhook::create_mid).
-/*
+    template <typename T>
     [[nodiscard]] static std::expected<MidHook, Error> create(
-        FnPtr auto target, MidHookFn destination_fn, Flags flags = Default) {
+        T target, MidHookFn destination_fn, Flags flags = Default) {
         return create(reinterpret_cast<void*>(target), destination_fn, flags);
     }
-*/
 
     /// @brief Creates a new MidHook object with a given Allocator.
     /// @param allocator The Allocator to use.
@@ -106,12 +105,11 @@ public:
     /// @param flags The flags to use.
     /// @return The MidHook object or a MidHook::Error if an error occurred.
     /// @note If you don't care about error handling, use the easy API (safetyhook::create_mid).
-/*
-    [[nodiscard]] static std::expected<MidHook, Error> create(const std::shared_ptr<Allocator>& allocator,
-        FnPtr auto target, MidHookFn destination_fn, Flags flags = Default) {
+    template <typename T>
+    [[nodiscard]] static std::expected<MidHook, Error> create(
+        const std::shared_ptr<Allocator>& allocator, T target, MidHookFn destination_fn, Flags flags = Default) {
         return create(allocator, reinterpret_cast<void*>(target), destination_fn, flags);
     }
-*/
 
     MidHook() = default;
     MidHook(const MidHook&) = delete;

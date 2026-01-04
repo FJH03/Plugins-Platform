@@ -15,9 +15,9 @@
 	"common.games.txt"
 	{
 	}
-
-	"game.cstrike.txt"
+	
+	"engine.ep2v.txt"
 	{
-		"game"		"cstrike"
+		"engine"	"orangebox_valve"
 	}
 }

@@ -115,7 +115,7 @@ public:
             retErr.allocator_error = err;
             return retErr;
         }
-	};
+    };
 
     /// @brief Creates a new VmtHook object. Will clone the VMT of the given object and replace it.
     /// @param object The object to hook.
@@ -144,7 +144,7 @@ public:
     /// @brief Hooks a method in the VMT.
     /// @param index The index of the method to hook.
     /// @param new_function The new function to use.
-    [[nodiscard]] std::expected<VmHook, Error> hook_method(size_t index, FnPtr new_function) {
+    template <typename T> [[nodiscard]] std::expected<VmHook, Error> hook_method(size_t index, T new_function) {
         VmHook hook{};
 
         ++index; // Skip RTTI pointer.

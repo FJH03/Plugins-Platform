@@ -130,6 +130,8 @@ class SMConfig(object):
     else:
       self.mms_root = ResolveEnvPath('MMSOURCE112', 'mmsource-1.12')
       if not self.mms_root:
+        self.mms_root = ResolveEnvPath('MMSOURCE', 'metamod-source')
+      if not self.mms_root:
         self.mms_root = ResolveEnvPath('MMSOURCE_DEV', 'metamod-source')
       if not self.mms_root:
         self.mms_root = ResolveEnvPath('MMSOURCE_DEV', 'mmsource-central')
@@ -144,7 +146,7 @@ class SMConfig(object):
           self.mysql_root['x86'] = builder.options.mysql_path
         else:
           for i in range(10):
-            self.mysql_root['x86'] = ResolveEnvPath('MYSQL55', 'mysql-5.' + str(i))
+            self.mysql_root['x86'] = ResolveEnvPath('MYSQL57', 'mysql-5.' + str(i))
             if self.mysql_root['x86']:
               break
         if not self.mysql_root['x86'] or not os.path.isdir(self.mysql_root['x86']):
@@ -156,7 +158,7 @@ class SMConfig(object):
           self.mysql_root['x86_64'] = builder.options.mysql64_path
         else:
           for i in range(10):
-            self.mysql_root['x86_64'] = ResolveEnvPath('MYSQL55_64', 'mysql-5.' + str(i) + '-x86_64')
+            self.mysql_root['x86_64'] = ResolveEnvPath('MYSQL57_64', 'mysql-5.' + str(i) + '-x86_64')
             if self.mysql_root['x86_64']:
               break
         if not self.mysql_root['x86_64'] or not os.path.isdir(self.mysql_root['x86_64']):
@@ -218,9 +220,6 @@ class SMConfig(object):
     ]
     cxx.includes += [
       os.path.join(builder.sourcePath, 'public'),
-      # Support both styles used in the tree:
-      #   #include <am-string.h>
-      #   #include <amtl/am-string.h>
       os.path.join(builder.sourcePath, '..', 'third_party', 'amtl', 'amtl'),
       os.path.join(builder.sourcePath, '..', 'third_party', 'amtl'),
     ]
@@ -248,6 +247,8 @@ class SMConfig(object):
       '-Wno-unused',
       '-Wno-switch',
       '-Wno-array-bounds',
+      '-Wno-unknown-pragmas',
+      '-Wno-dangling-else',
       '-fvisibility=hidden',
     ]
     if cxx.target.arch in ['x86', 'x86_64']:
@@ -293,6 +294,10 @@ class SMConfig(object):
       if not have_clang:
         raise Exception('--enable-asan only supported when using Clang')
       self.configure_asan(cxx)
+
+    # AMTL uses std::bind
+    if (have_gcc and cxx.version >= 'gcc-10.0') or (have_clang and cxx.version >= 'clang-12.0'):
+        cxx.cxxflags += ['-Wno-deprecated-declarations']
 
     # Work around SDK warnings.
     if cxx.version >= 'clang-10.0' or cxx.version >= 'apple-clang-12.0':
@@ -411,10 +416,6 @@ class SMConfig(object):
 
   def add_libamtl(self):
     # Add libamtl.
-    #
-    # Note: We cannot builder.Build("../third_party/.../AMBuilder") because AMBuild 2.2
-    # disallows generating build folders outside the configured build root.
-    # Instead, compile the same amtl sources directly but keep outputs inside this build.
     self.libamtl = {}
 
     amtl_root = os.path.abspath(os.path.join(builder.sourcePath, '..', 'third_party', 'amtl'))

@@ -32,6 +32,7 @@
 #include "common_logic.h"
 #include <IHandleSys.h>
 #include "GameConfigs.h"
+#include "PseudoAddrManager.h"
 
 HandleType_t g_GameConfigsType;
 
@@ -64,7 +65,7 @@ static cell_t smn_LoadGameConfigFile(IPluginContext *pCtx, const cell_t *params)
 	pCtx->LocalToString(params[1], &filename);
 	if (!g_GameConfigs.LoadGameConfigFile(filename, &gc, error, sizeof(error)))
 	{
-		return pCtx->ThrowNativeError("Unable to open %s: %s", filename, error);
+		return BAD_HANDLE;
 	}
 
 	Handle_t hndl = handlesys->CreateHandle(g_GameConfigsType, gc, pCtx->GetIdentity(), g_pCoreIdent, NULL);
@@ -155,11 +156,10 @@ static cell_t smn_GameConfGetAddress(IPluginContext *pCtx, const cell_t *params)
 	if (!gc->GetAddress(key, &val))
 		return 0;
 
-#ifdef PLATFORM_X86
-	return (cell_t)val;
-#else
-	return pseudoAddr.ToPseudoAddress(val);
-#endif
+	if (pCtx->GetRuntime()->FindPubvarByName("__Virtual_Address__", nullptr) == SP_ERROR_NONE) {
+		return pseudoAddr.ToPseudoAddress(val);
+	}
+	return reinterpret_cast<uintptr_t>(val);
 }
 
 static cell_t smn_GameConfGetMemSig(IPluginContext *pCtx, const cell_t *params)
@@ -187,11 +187,10 @@ static cell_t smn_GameConfGetMemSig(IPluginContext *pCtx, const cell_t *params)
 		return 0;
 	}
 
-#ifdef PLATFORM_X86
-	return (cell_t)val;
-#else
-	return pseudoAddr.ToPseudoAddress(val);
-#endif
+	if (pCtx->GetRuntime()->FindPubvarByName("__Virtual_Address__", nullptr) == SP_ERROR_NONE) {
+		return pseudoAddr.ToPseudoAddress(val);
+	}
+	return reinterpret_cast<uintptr_t>(val);
 }
 
 static GameConfigsNatives s_GameConfigsNatives;

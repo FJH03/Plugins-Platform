@@ -14,10 +14,10 @@
 	"common.games.txt"
 	{
 	}
-	
-	"engine.css.txt"
+
+	"engine.ep2valve.txt"
 	{
-		"engine"	"css"
+		"engine"	"orangebox_valve"
 	}
 	
 	"game.cstrike.txt"

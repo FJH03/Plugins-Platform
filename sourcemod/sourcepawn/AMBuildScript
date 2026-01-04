@@ -362,7 +362,7 @@ class SourcePawn(object):
             elif binary.compiler.target.platform == 'mac':
                 binary.compiler.defines += ['DARWIN']
 
-        binary.compiler.includes += [
+        binary.compiler.cxxincludes += [
             os.path.join(builder.currentSourcePath),
             os.path.join(builder.currentSourcePath, 'include'),
             os.path.join(builder.currentSourcePath, 'third_party'),
@@ -374,7 +374,7 @@ class SourcePawn(object):
         if generated_headers:
             for entry in generated_headers:
                 include_path = os.path.join(builder.buildPath, os.path.dirname(entry.path))
-                binary.compiler.includes += [include_path]
+                binary.compiler.cxxincludes += [include_path]
             binary.compiler.sourcedeps += generated_headers
 
     def BuildCoreForArch(self, cxx, builder):
