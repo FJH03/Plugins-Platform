@@ -11,6 +11,7 @@
 #ifndef __CVECTOR_H__
 #define __CVECTOR_H__
 
+#include <cstddef>
 #include <assert.h>
 
 //This file originally from AMX Mod X
@@ -282,14 +283,14 @@ public:
 	};
 
 	// constructors / destructors
-	CVector<T>()
+	CVector()
 	{
 		m_Size = 0;
 		m_CurrentUsedSize = 0;
 		m_Data = NULL;
 	}
 
-	CVector<T>(const CVector<T> & other)
+	CVector(const CVector<T> & other)
 	{
 		// copy data
 		m_Data = new T [other.m_CurrentUsedSize];
@@ -299,7 +300,7 @@ public:
 			m_Data[i] = other.m_Data[i];
 	}
 
-	~CVector<T>()
+	~CVector()
 	{
 		clear();
 	}

@@ -2,7 +2,7 @@
  * vim: set ts=4 sw=4 tw=99 noet :
  * ======================================================
  * Metamod:Source
- * Copyright (C) 2004-2015 AlliedModders LLC and authors.
+ * Copyright (C) 2004-2025 AlliedModders LLC and authors.
  * All rights reserved.
  * ======================================================
  *
@@ -23,15 +23,16 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
-#include <stdio.h>
-#include <ctype.h>
-#include <string.h>
-#include <assert.h>
-#include <stdlib.h>
-#include <stddef.h>
+#include <cstdio>
+#include <cctype>
+#include <cstring>
+#include <cassert>
+#include <cstdlib>
+#include <cstddef>
+
 #include "loader.h"
-#include <sh_memfuncinfo.h>
-#include <sh_memory.h>
+#include "sh_memfuncinfo.h"
+#include "sh_memory.h"
 #include "utility.h"
 #include "gamedll.h"
 
@@ -50,6 +51,7 @@ static void *gamedll_lib = NULL;
 static IServerGameDLL *gamedll_iface = NULL;
 static ISource2ServerConfig *config_iface = NULL;
 static QueryValveInterface gamedll_qvi = NULL;
+static char gamedll_iface_name[128] = { 0 };
 static int gamedll_version = 0;
 static int isgd_shutdown_index = -1;
 #if defined _WIN32
@@ -59,28 +61,24 @@ static char mm_path[PLATFORM_MAX_PATH];
 static bool g_is_source2 = false;
 
 #if defined _WIN32
-#define SERVER_NAME			"server.dll"
+#define SERVER_NAME_S1			"server.dll"
+#define SERVER_NAME_S2			SERVER_NAME_S1
 #if defined _WIN64
-#define PLATFORM_NAME		"win64"
+#define PLATFORM_SUBDIR_S1		"/"
+#define PLATFORM_SUBDIR_S2		"/win64"
 #else
-#define PLATFORM_NAME		"win32"
-#endif
-#elif defined __APPLE__
-#define SERVER_NAME			"server.dylib"
-#if defined __amd64__
-#define PLATFORM_NAME		"osx64"
-#else
-#define PLATFORM_NAME		"osx32"
+#define PLATFORM_SUBDIR_S1		"/"
+#define PLATFORM_SUBDIR_S2		"/win32"
 #endif
 #elif defined __linux__
+#define SERVER_NAME_S1         "server" LIB_SUFFIX
+#define SERVER_NAME_S2         "libserver" LIB_SUFFIX
 #if defined __amd64__
-// hackhack - source2 uses libserver as name on POSIX, but source1 x64 does not
-//              (but source1 x64 is also client-only right now so what-ev)
-#define SERVER_NAME                     "libserver" LIB_SUFFIX
-#define PLATFORM_NAME		"linuxsteamrt64"
+#define PLATFORM_SUBDIR_S1		"/linux64"
+#define PLATFORM_SUBDIR_S2		"/linuxsteamrt64"
 #else
-#define SERVER_NAME                     "server" LIB_SUFFIX
-#define PLATFORM_NAME		"linuxsteamrt32"
+#define PLATFORM_SUBDIR_S1		"/"
+#define PLATFORM_SUBDIR_S2		"/linuxsteamrt32"
 #endif
 #endif
 
@@ -168,13 +166,14 @@ mm_DetectGameInformation()
 		}
 
 		const char *pRelPath = is_source2 ? "../../" : "";
-		const char *pOSDir = is_source2 ? PLATFORM_NAME "/" : "";
+		const char *pOSDir = is_source2 ? PLATFORM_SUBDIR_S2 "/" : PLATFORM_SUBDIR_S1;
+		const char *pServerBin = is_source2 ? SERVER_NAME_S2 : SERVER_NAME_S1;
 		if (stricmp(key, "GameBin") == 0)
-			mm_PathFormat(temp_path, sizeof(temp_path), "%s/%s%s/%s" SERVER_NAME, lptr, pRelPath, ptr, pOSDir);
+			mm_PathFormat(temp_path, sizeof(temp_path), "%s/%s%s%s/%s", lptr, pRelPath, ptr, pOSDir, pServerBin);
 		else if (!ptr[0])
-			mm_PathFormat(temp_path, sizeof(temp_path), "%s/%sbin/%s" SERVER_NAME, lptr, pRelPath, pOSDir);
+			mm_PathFormat(temp_path, sizeof(temp_path), "%s/%sbin%s/%s", lptr, pRelPath, pOSDir, pServerBin);
 		else
-			mm_PathFormat(temp_path, sizeof(temp_path), "%s/%s%s/bin/%s" SERVER_NAME, lptr, pRelPath, ptr, pOSDir);
+			mm_PathFormat(temp_path, sizeof(temp_path), "%s/%s%s/bin%s/%s", lptr, pRelPath, ptr, pOSDir, pServerBin);
 
 		if (mm_PathCmp(mm_path, temp_path))
 			continue;
@@ -263,7 +262,7 @@ gamedll_bridge_info g_bridge_info;
 // IS2SC::AllowDedicatedServer - return true. remove hook.
 // CreateInterfaceFn (IS2S) - hook Init and Shutdown
 // IS2S::Init - do same as old ISGD::DLLInit, including core load. return orig. remove hook.
-// IS2S::Shutdown - <-- this
+// IS2SC::Disconnect - do same as old ISGD::DLLShutdown
 
 enum InitReturnVal_t
 {
@@ -276,7 +275,7 @@ enum InitReturnVal_t
 class ISource2ServerConfig
 {
 public:
-	virtual bool	Connect(QueryValveInterface factory)
+	virtual bool Connect(QueryValveInterface factory)
 	{
 		g_bridge_info.engineFactory = factory;
 		g_bridge_info.fsFactory = factory;
@@ -299,19 +298,52 @@ public:
 					void *addr;
 					intptr_t adjustor;
 				} s;
-		} u;
+			} u;
 			u.s.addr = is2sc_orig_connect;
 			u.s.adjustor = 0;
 #endif
-			result = (((VEmptyClass *) config_iface)->*u.mfpnew)(factory);
+			result = (((VEmptyClass *)config_iface)->*u.mfpnew)(factory);
 		}
 
 		mm_PatchConnect(false);
 
 		return result;
 	}
+
+	virtual void Disconnect()
+	{
+		gamedll_bridge->Unload();
+		gamedll_bridge = NULL;
+		mm_UnloadMetamodLibrary();
+
+		/* Call original function */
+		{
+			union
+			{
+				void (VEmptyClass::*mfpnew)();
 #if defined _WIN32
-	virtual bool	AllowDedicatedServers(int universe) const
+				void *addr;
+			} u;
+			u.addr = isgd_orig_shutdown;
+#else
+				struct
+				{
+					void *addr;
+					intptr_t adjustor;
+				} s;
+			} u;
+			u.s.addr = isgd_orig_shutdown;
+			u.s.adjustor = 0;
+#endif
+			(((VEmptyClass *)config_iface)->*u.mfpnew)();
+		}
+
+		mm_UnloadLibrary(gamedll_lib);
+		gamedll_lib = NULL;
+	}
+
+#if defined _WIN32
+	virtual bool AllowDedicatedServers(int universe) const
 	{
 		mm_PatchAllowDedicated(false);
 		return true;
@@ -328,7 +360,18 @@ public:
 
 	virtual InitReturnVal_t Init()
 	{
-		mm_backend = MMBackend_DOTA;
+		if (!stricmp("citadel", game_name))
+		{
+			mm_backend = MMBackend_Deadlock;
+		}
+		else if (!stricmp("csgo", game_name))
+		{
+			mm_backend = MMBackend_CS2;
+		}
+		else
+		{
+			mm_backend = MMBackend_DOTA;
+		}
 
 		char error[255];
 		if (!mm_LoadMetamodLibrary(mm_backend, error, sizeof(error)))
@@ -354,6 +397,7 @@ public:
 		{
 			g_bridge_info.pGlobals = nullptr;// pGlobals;
 			g_bridge_info.dllVersion = gamedll_version;
+			g_bridge_info.dllInterfaceName = gamedll_iface_name;
 			g_bridge_info.isgd = gamedll_iface;
 			g_bridge_info.gsFactory = gamedll_qvi;
 			g_bridge_info.vsp_listener_path = mm_path;
@@ -412,38 +456,6 @@ public:
 
 		return result;
 	}
-
-	virtual void Shutdown()
-	{
-		gamedll_bridge->Unload();
-		gamedll_bridge = NULL;
-		mm_UnloadMetamodLibrary();
-
-		/* Call original function */
-		{
-			union
-			{
-				void (VEmptyClass::*mfpnew)();
-#if defined _WIN32
-				void *addr;
-			} u;
-			u.addr = isgd_orig_shutdown;
-#else
-				struct
-				{
-					void *addr;
-					intptr_t adjustor;
-				} s;
-			} u;
-			u.s.addr = isgd_orig_shutdown;
-			u.s.adjustor = 0;
-#endif
-			(((VEmptyClass *)gamedll_iface)->*u.mfpnew)();
-		}
-
-		mm_UnloadLibrary(gamedll_lib);
-		gamedll_lib = NULL;
-	}
 };
 
 class IServerGameDLL
@@ -454,7 +466,7 @@ public:
 						 QueryValveInterface fileSystemFactory, 
 						 void *pGlobals)
 	{
-		mm_backend = mm_DetermineBackend(engineFactory, gamedll_qvi, game_name);
+		mm_backend = mm_DetermineBackendS1(engineFactory, gamedll_qvi, game_name);
 
 		char error[255];
 		if (mm_backend == MMBackend_UNKNOWN)
@@ -490,6 +502,7 @@ public:
 			g_bridge_info.fsFactory = (QueryValveInterface)fileSystemFactory;
 			g_bridge_info.pGlobals = pGlobals;
 			g_bridge_info.dllVersion = gamedll_version;
+			g_bridge_info.dllInterfaceName = gamedll_iface_name;
 			g_bridge_info.isgd = gamedll_iface;
 			g_bridge_info.gsFactory = gamedll_qvi;
 			g_bridge_info.vsp_listener_path = mm_path;
@@ -650,7 +663,7 @@ mm_PatchDllShutdown()
 	mfp.isVirtual = false;
 	if (g_is_source2)
 	{
-		SourceHook::GetFuncInfo(&ISource2Server::Shutdown, mfp);
+		SourceHook::GetFuncInfo(&ISource2ServerConfig::Disconnect, mfp);
 	}
 	else
 	{
@@ -662,13 +675,14 @@ mm_PatchDllShutdown()
 
 	if (g_is_source2)
 	{
-		vtable_src = (void **)*(void **)&is2s_thunk;
+		vtable_src = (void **)*(void **)&is2sc_thunk;
+		vtable_dest = (void **)*(void **)config_iface;
 	}
 	else
 	{
 		vtable_src = (void **)*(void **)&isgd_thunk;
+		vtable_dest = (void **)*(void **)gamedll_iface;
 	}
-	vtable_dest = (void **)*(void **)gamedll_iface;
 
 	isgd_orig_shutdown = vtable_dest[isgd_shutdown_index];
 	vtable_dest[isgd_shutdown_index] = vtable_src[mfp.vtblindex];
@@ -748,6 +762,15 @@ mm_PatchConnect(bool patch)
 void *
 mm_GameDllRequest(const char *name, int *ret)
 {
+	if (strncmp(name, "Source2Server", 13) == 0 && !mm_GetCommandArgument("-dedicated") && !mm_GetCommandArgument("-insecure"))
+	{
+		mm_LogFatal("Metamod:Source requires -dedicated or -insecure on the command line to be able to load");
+		if (ret != nullptr)
+			*ret = 1; // IFACE_FAILED
+
+		return nullptr;
+	}
+
 	if (strncmp(name, "Source2ServerConfig", 19) == 0)
 	{
 		g_is_source2 = true;
@@ -800,9 +823,10 @@ mm_GameDllRequest(const char *name, int *ret)
 			return ptr;
 		}
 	}
-	else if (strncmp(name, "Source2Server0", 14) == 0)
+	else if (strncmp(name, "Source2Server", 13) == 0 && atoi(&name[13]) != 0)
 	{
 		gamedll_iface = (IServerGameDLL *)gamedll_qvi(name, ret);
+		strncpy(gamedll_iface_name, name, sizeof(gamedll_iface_name));
 		gamedll_version = atoi(&name[13]);
 		mm_PatchDllInit(true);
 
@@ -849,6 +873,7 @@ mm_GameDllRequest(const char *name, int *ret)
 			mm_FreeCachedLibraries();	
 			gamedll_lib = lib;
 			gamedll_iface = (IServerGameDLL *)ptr;
+			strncpy(gamedll_iface_name, name, sizeof(gamedll_iface_name));
 			gamedll_qvi = qvi;
 			gamedll_version = atoi(&name[13]);
 			mm_PatchDllInit(true);

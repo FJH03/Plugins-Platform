@@ -179,6 +179,10 @@ New SH_CALL
 #include "sourcehook_impl_ciface.h"
 #include "sourcehook_impl_cvfnptr.h"
 #include "sourcehook_impl_chookidman.h"
+#include <cstdio>
+#include <stdarg.h>
+
+extern SourceHook::ISourceHook *g_SHPtr;
 
 namespace SourceHook
 {
@@ -188,6 +192,27 @@ namespace SourceHook
 
 	namespace Impl
 	{
+		enum SH_LOG {
+			VERBOSE,
+			NORMAL,
+			TEST,
+			NONE,
+		};
+
+		extern SH_LOG sh_log_level;
+
+		template<typename... Args>
+		inline void SH_DEBUG_LOG(SH_LOG log_level, const char* message, Args... args)
+		{
+#ifndef SOURCEHOOK_TESTS
+			if (log_level < sh_log_level) {
+				return;
+			}
+
+			SH_GLOB_SHPTR->LogDebug(message, args...);
+#endif
+		}
+
 		struct CHookContext : IHookContext
 		{
 			CHookContext() : m_CleanupTask(NULL)
@@ -301,12 +326,13 @@ namespace SourceHook
 			CHookIDManager m_HookIDMan;
 			HookContextStack m_ContextStack;
 			List<PendingUnload *> m_PendingUnloads;
+			DebugLogFunc m_LogFunc;
 
 			bool SetHookPaused(int hookid, bool paused);
 			CHookManList::iterator RemoveHookManager(CHookManList::iterator iter);
 			List<CVfnPtr>::iterator RevertAndRemoveVfnPtr(List<CVfnPtr>::iterator vfnptr_iter);
 		public:
-			CSourceHookImpl();
+			CSourceHookImpl(DebugLogFunc logfunc = printf);
 			virtual ~CSourceHookImpl();
 
 			/**
@@ -359,6 +385,8 @@ namespace SourceHook
 			void ResetIgnoreHooks(void *vfnptr);
 
 			void DoRecall();
+
+			void LogDebug(const char *pFormat, ...) override;
 
 			IHookContext *SetupHookLoop(IHookManagerInfo *hi, void *vfnptr, void *thisptr, void **origCallAddr, META_RES *statusPtr,
 				META_RES *prevResPtr, META_RES *curResPtr, const void *origRetPtr, void *overrideRetPtr);

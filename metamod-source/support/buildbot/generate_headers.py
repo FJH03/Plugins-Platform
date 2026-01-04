@@ -54,7 +54,7 @@ def output_version_header():
 
   with open(os.path.join(SourceFolder, 'product.version')) as fp:
     contents = fp.read()
-  m = re.match('(\d+)\.(\d+)\.(\d+)-?(.*)', contents)
+  m = re.match(r'(\d+)\.(\d+)\.(\d+)-?(.*)', contents)
   if m == None:
     raise Exception('Could not detremine product version')
   major, minor, release, tag = m.groups()
@@ -84,7 +84,7 @@ def output_version_header():
 #define MMS_VERSION_FILE	{2},{3},{4},0
 
 #endif /* _METAMOD_AUTO_VERSION_INFORMATION_H_ */
-  """.format(tag, shorthash, major, minor, release, fullstring, count, branch))
+    """.format(tag, shorthash, major, minor, release, fullstring, count, branch))
 
 output_version_header()
 

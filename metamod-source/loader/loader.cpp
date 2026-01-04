@@ -2,7 +2,7 @@
  * vim: set ts=4 sw=4 tw=99 noet :
  * ======================================================
  * Metamod:Source
- * Copyright (C) 2004-2015 AlliedModders LLC and authors.
+ * Copyright (C) 2004-2023 AlliedModders LLC and authors.
  * All rights reserved.
  * ======================================================
  *
@@ -23,12 +23,15 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
-#include <time.h>
-#include <assert.h>
-#include <stdarg.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <ctime>
+#include <cassert>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cstdint>
+#include <cstdlib>
+
 #include "loader.h"
 #include "serverplugin.h"
 #include "gamedll.h"
@@ -48,6 +51,12 @@ mm_LogFatal(const char *message, ...)
 	time_t t;
 	va_list ap;
 	char header[256];
+
+	printf("MMS: Fatal error: ");
+	va_start(ap, message);
+	vprintf(message, ap);
+	va_end(ap);
+	printf("\n");
 
 	fp = fopen(mm_fatal_logfile, "at");
 	if (!fp && (fp = fopen("metamod-fatal.log", "at")) == NULL)
@@ -93,7 +102,9 @@ static const char *backend_names[] =
 	"2.doi",
 	"2.mock",
 	"2.pvkii",
-	"2.mcv"
+	"2.mcv",
+	"2.cs2",
+	"2.deadlock",
 };
 
 #if defined _WIN32
@@ -198,109 +209,47 @@ mm_GetProcAddress(const char *name)
 	return mm_GetLibAddress(mm_library, name);
 }
 
+typedef const char *(*GetGameInfoStringFn)(const char *pszKeyName, const char *pszDefaultValue, char *pszOut, uint64_t cbOut);
+
 void
 mm_GetGameName(char *buffer, size_t size)
 {
-	buffer[0] = '\0';
-	bool bHasDedicated = false;
-
-#if defined _WIN32
-	static char game[128];
-
-	LPWSTR pCmdLine = GetCommandLineW();
-	int argc;
-	LPWSTR *wargv = CommandLineToArgvW(pCmdLine, &argc);
-	for (int i = 0; i < argc; ++i)
+	if (!mm_GetCommandArgument("-game", buffer, size))
 	{
-		if (wcscmp(wargv[i], L"-game") == 0)
+		// Source 2 doesn't ever use -game, so we'll hardcode by app id for now. This same approach
+		// won't work for the few Source 1 games that don't require -game, as S1 initializes Steam
+		// too late (although the env var still still be already set if their is a running Steam client
+		// installed). We previously called GetGameInfoString exported from tier0 to look up the first Mod
+		// dir defined. While that worked for CS2 and Dota 2, Deadlock does not define any Mod paths, solely
+		// relying on Game paths. The function only returns the first path defined, and in the case of S2, where
+		// we can't even set MM:S path with GameBin instead of Game, the first Game path will always be MM:S's
+		// location, rather than the real Game dir
+		char *pszAppId = std::getenv("SteamAppId");
+		if (pszAppId)
 		{
-			if (++i >= argc)
-				break;
-
-			wcstombs(buffer, wargv[i], size);
-			buffer[size-1] = '\0';
-		}
-		else if (wcscmp(wargv[i], L"-dedicated") == 0)
-		{
-			bHasDedicated = true;
-		}
-	}
-
-	LocalFree(wargv);
-
-#elif defined __APPLE__
-	int argc = *_NSGetArgc();
-	char **argv = *_NSGetArgv();
-	for (int i = 0; i < argc; ++i)
-	{
-		if (strcmp(argv[i], "-game") == 0)
-		{
-			if (++i >= argc)
-				break;
-
-			strncpy(buffer, argv[i], size);
-			buffer[size-1] = '\0';
-		}
-		else if (strcmp(argv[i], "-dedicated") == 0)
-		{
-			bHasDedicated = true;
-		}
-	}
-
-#elif defined __linux__
-	FILE *pFile = fopen("/proc/self/cmdline", "rb");
-	if (pFile)
-	{
-		char *arg = NULL;
-		size_t argsize = 0;
-		bool bNextIsGame = false;
-
-		while (getdelim(&arg, &argsize, 0, pFile) != -1)
-		{
-			if (bNextIsGame)
+			switch (strtoul(pszAppId, nullptr, 10))
 			{
-				strncpy(buffer, arg, size);
-				buffer[size-1] = '\0';
-				bNextIsGame = false;
-			}
-
-			if (strcmp(arg, "-game") == 0)
-			{
-				bNextIsGame = true;
-			}
-			else if (strcmp(arg, "-dedicated") == 0)
-			{
-				bHasDedicated = true;
+				case 570ul:
+					strncpy(buffer, "dota", size);
+					break;
+				case 730ul:
+					strncpy(buffer, "csgo", size);
+					break;
+				case 1422450ul:
+					strncpy(buffer, "citadel", size);
+					break;
 			}
 		}
-
-		free(arg);
-		fclose(pFile);
 	}
-#else
-#error unsupported platform
-#endif
 
 	if (buffer[0] == 0)
 	{
-		// HackHackHack - Different engines have different defaults if -game isn't specified
-		// we only use this for game detection, and not even in all cases. Old behavior was to 
-		// give back ".", which was only really accurate for Dark Messiah. We'll add a special 
-		// case for Source2 / Dota as well, since it only supports gameinfo loading, which relies
-		// on accuracy here more than VSP loading.
-		if (bHasDedicated)
-		{
-			strncpy(buffer, "dota", size);
-		}
-		else
-		{
-			strncpy(buffer, ".", size);
-		}
+		strncpy(buffer, ".", size);
 	}
 }
 
 MetamodBackend
-mm_DetermineBackend(QueryValveInterface engineFactory, QueryValveInterface serverFactory, const char *game_name)
+mm_DetermineBackendS1(QueryValveInterface engineFactory, QueryValveInterface serverFactory, const char *game_name)
 {
 	if (engineFactory("VEngineServer023", NULL) != NULL)
 	{
@@ -327,12 +276,12 @@ mm_DetermineBackend(QueryValveInterface engineFactory, QueryValveInterface serve
 			return MMBackend_BMS;
 		}
 
-		if (mm_FindPattern((void *)engineFactory, " Blade Symphony ", sizeof(" Blade Symphony ") - 1))
+		if (serverFactory("VSERVERTOOLS003", NULL) != NULL)
 		{
 			return MMBackend_Blade;
 		}
 
-		if (mm_FindPattern((void *)engineFactory, "Military Conflict: Vietnam", sizeof("Military Conflict: Vietnam") - 1))
+		if (strcmp(game_name, "vietnam") == 0)
 		{
 			return MMBackend_MCV;
 		}
@@ -440,6 +389,12 @@ mm_DetermineBackend(QueryValveInterface engineFactory, QueryValveInterface serve
 					else if (strcmp(game_name, ".") == 0 && engineFactory("MOCK_ENGINE", NULL))
 					{
 						return MMBackend_Mock;
+					}
+					else if (serverFactory("ServerGameClients005", NULL) != nullptr)
+					{
+						// 2025 version of SDK 2013, or maybe hl1mp, or anything else shaped like those.
+						// We may later make a separate SDK for this branch. For now, they match, we'll hack it
+						return MMBackend_HL2DM;
 					}
 					else
 					{

@@ -23,12 +23,13 @@
  * 3. This notice may not be removed or altered from any source distribution.
  */
 
-#include <assert.h>
+#include <cassert>
+
 #include "metamod.h"
 #include "metamod_plugins.h"
 #include "metamod_util.h"
-#include <loader_bridge.h>
-#include "provider/provider_ep2.h"
+#include "loader_bridge.h"
+#include "provider/provider_base.h"
 
 using namespace SourceMM;
 
@@ -38,7 +39,8 @@ public:
 	virtual bool DLLInit_Pre(const gamedll_bridge_info *info, char *buffer, size_t maxlength)
 	{
 		server = (IServerGameDLL *) info->isgd;
-		g_Metamod.SetGameDLLInfo((CreateInterfaceFn) info->gsFactory,
+		g_Metamod.SetGameDLLInfo((CreateInterfaceFn)info->gsFactory,
+			info->dllInterfaceName,
 			info->dllVersion,
 			true);
 		g_Metamod.SetVSPListener(info->vsp_listener_path);
@@ -63,8 +65,8 @@ public:
 		SourceHook::MemFuncInfo mfi;
 
 		mfi.isVirtual = false;
-#if SOURCE_ENGINE == SE_DOTA
-		SourceHook::GetFuncInfo(&IServerGameDLL::Shutdown, mfi);
+#ifdef META_IS_SOURCE2
+		SourceHook::GetFuncInfo(&ISource2ServerConfig::Disconnect, mfi);
 #else
 		SourceHook::GetFuncInfo(&IServerGameDLL::DLLShutdown, mfi);
 #endif

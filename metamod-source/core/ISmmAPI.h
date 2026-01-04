@@ -33,25 +33,42 @@
  * @file ISmmAPI.h
  */
 
-#include <stdarg.h>
-#include <sourcehook.h>
-#include <IPluginManager.h>
+#include <cstdarg>
+
+#include "sourcehook.h"
+#include "IPluginManager.h"
 
 #if defined META_NO_HL2SDK
 class CGlobalVars;
 struct edict_t;
 class ConCommandBase;
+typedef ConCommandBase ProviderConVar;
+typedef ConCommandBase ProviderConCommand;
 #else
-#include <eiface.h>
-#endif
+#include "eiface.h"
 
-#include <ISmmPlugin.h>
-#include <ISmmPluginExt.h>
+#if defined META_IS_SOURCE2
+typedef ConVarRefAbstract ProviderConVar;
+typedef ConCommandRef ProviderConCommand;
+class ConCommandBase;
+#else
+typedef ConCommandBase ProviderConVar;
+typedef ConCommandBase ProviderConCommand;
+#endif
+#endif
 
 #define	MMIFACE_SOURCEHOOK		"ISourceHook"			/**< ISourceHook Pointer */
 #define	MMIFACE_PLMANAGER		"IPluginManager"		/**< SourceMM Plugin Functions */
 #define MMIFACE_SH_HOOKMANAUTOGEN	"IHookManagerAutoGen"		/**< SourceHook::IHookManagerAutoGen Pointer */
 #define IFACE_MAXNUM			999						/**< Maximum interface version */
+
+#if defined META_IS_SOURCE2
+typedef CPlayerSlot MMSPlayer_t;
+static const MMSPlayer_t MMSPlayer_INVALID = CPlayerSlot(-1);
+#else
+typedef edict_t* MMSPlayer_t;
+static const MMSPlayer_t MMSPlayer_INVALID = nullptr;
+#endif
 
 typedef void* (*CreateInterfaceFn)(const char *pName, int *pReturnCode);
 
@@ -107,6 +124,7 @@ namespace SourceMM
 		/**
 		 * @brief Returns an interface factory for the GameDLL.
 		 *
+		 * @param syn			If syn is true, the synthetic wrapper is returned.
 		 *						If syn is false, the true function is returned.
 		 * @return				CreateInterfaceFn function pointer.
 		 */
@@ -121,6 +139,8 @@ namespace SourceMM
 
 		/**
 		 * @brief Registers a ConCommandBase.
+		 * 
+		 * @deprecated since 2.1
 		 *
 		 * @param plugin		Parent plugin API pointer.
 		 * @param pCommand		ConCommandBase to register.
@@ -130,6 +150,8 @@ namespace SourceMM
 
 		/**
 		 * @brief Unregisters a ConCommandBase.
+		 * 
+		 * @deprecated since 2.1
 		 *
 		 * @param plugin		Parent plugin API pointer.
 		 * @param pCommand		ConCommandBase to unlink.
@@ -255,7 +277,7 @@ namespace SourceMM
 		 * @param client		Client edict pointer.
 		 * @param fmt			Formatted string to print to the client.
 		 */
-		virtual void ClientConPrintf(edict_t *client, const char *fmt, ...) =0;
+		virtual void ClientConPrintf(MMSPlayer_t client, const char *fmt, ...) =0;
 
 		/**
 		 * @brief Wrapper around InterfaceSearch().  Assumes no maximum.
@@ -391,6 +413,40 @@ namespace SourceMM
 								  size_t maxlength,
 								  const char *format,
 								  va_list ap) =0;
+
+		/**
+		 * @brief Registers a ConCommand.
+		 *
+		 * @param plugin		Parent plugin API pointer.
+		 * @param pCommand		ConCommand to register.
+		 * @return				True if successful, false otherwise.
+		 */
+		virtual bool RegisterConCommand(ISmmPlugin *plugin, ProviderConCommand *pCommand) =0;
+
+		/**
+		 * @brief Registers a ConVar.
+		 *
+		 * @param plugin		Parent plugin API pointer.
+		 * @param pCvar			ConVar to register.
+		 * @return				True if successful, false otherwise.
+		 */
+		virtual bool RegisterConVar(ISmmPlugin *plugin, ProviderConVar *pCvar) =0;
+
+		/**
+		 * @brief Unregisters a ConCommand.
+		 *
+		 * @param plugin		Parent plugin API pointer.
+		 * @param pCommand		ConCommand to unlink.
+		 */
+		virtual void UnregisterConCommand(ISmmPlugin *plugin, ProviderConCommand *pCommand) =0;
+
+		/**
+		 * @brief Unregisters a ConVar.
+		 *
+		 * @param plugin		Parent plugin API pointer.
+		 * @param pCvar			ConVar to unlink.
+		 */
+		virtual void UnregisterConVar(ISmmPlugin *plugin, ProviderConVar *pCvar) =0;
 	};
 }
 

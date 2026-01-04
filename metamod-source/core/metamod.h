@@ -31,12 +31,12 @@
  * @file sourcemm.h
  */
 
-#include <interface.h>
-#include <eiface.h>
-#include <sourcehook/sourcehook_impl.h>
-#include <sourcehook/sourcehook_hookmangen.h>
-#include <sourcehook/sourcehook.h>
-#include <ISmmPlugin.h>
+#include "interface.h"
+#include "eiface.h"
+#include "sourcehook/sourcehook_impl.h"
+#include "sourcehook/sourcehook_hookmangen.h"
+#include "sourcehook/sourcehook.h"
+#include "ISmmPlugin.h"
 #include "metamod_provider.h"
 
 using namespace SourceMM;
@@ -49,57 +49,57 @@ using namespace SourceMM;
 #define SOURCEMM_VERSION	SVN_FILE_VERSION_STRING
 #define SOURCEMM_DATE		__DATE__
 #define METAMOD_API_MAJOR	2		/* increase this on a breaking change */
-#define METAMOD_API_MINOR	0		/* increase this on a non-breaking API change */
+#define METAMOD_API_MINOR	1		/* increase this on a non-breaking API change */
 
 class MetamodSource : public ISmmAPI
 {
+public: // ISmmAPI
+	void LogMsg(ISmmPlugin *pl, const char *msg, ...) override;
+	CreateInterfaceFn GetEngineFactory(bool syn=true) override;
+	CreateInterfaceFn GetPhysicsFactory(bool syn=true) override;
+	CreateInterfaceFn GetFileSystemFactory(bool syn=true) override;
+	CreateInterfaceFn GetServerFactory(bool syn=true) override;
+	CGlobalVars *GetCGlobals() override;
+	bool RegisterConCommandBase(ISmmPlugin *plugin, ConCommandBase *pCommand) override;
+	void UnregisterConCommandBase(ISmmPlugin *plugin, ConCommandBase *pCommand) override;
+	bool RegisterConCommand(ISmmPlugin *plugin, ProviderConCommand *pCommand) override;
+	bool RegisterConVar(ISmmPlugin *plugin, ProviderConVar *pCvar) override;
+	void UnregisterConCommand(ISmmPlugin *plugin, ProviderConCommand *pCommand) override;
+	void UnregisterConVar(ISmmPlugin *plugin, ProviderConVar *pCvar) override;
+	void ConPrint(const char *str) override;
+	void ConPrintf(const char *fmt, ...) override;
+	void GetApiVersions(int &major, int &minor, int &plvers, int &plmin) override;
+	void GetShVersions(int &shvers, int &shimpl) override;
+	void AddListener(ISmmPlugin *plugin, IMetamodListener *pListener) override;
+	void *MetaFactory(const char *iface, int *ret, PluginId *id) override;
+	int FormatIface(char iface[], size_t maxlength) override;
+	void *InterfaceSearch(CreateInterfaceFn fn, const char *iface, int max, int *ret) override;
+	const char *GetBaseDir() override;
+	size_t PathFormat(char *buffer, size_t len, const char *fmt, ...) override;
+	void ClientConPrintf(MMSPlayer_t client, const char *fmt, ...) override;
+	void *VInterfaceMatch(CreateInterfaceFn fn, const char *iface, int min=-1) override;
+	void EnableVSPListener() override;
+	int GetGameDLLVersion() override;
+	int GetUserMessageCount() override;
+	int FindUserMessage(const char *name, int *size=NULL) override;
+	const char *GetUserMessage(int index, int *size=NULL) override;
+	int GetVSPVersion() override;
+	int GetSourceEngineBuild() override;
+	IServerPluginCallbacks *GetVSPInfo(int *pVersion) override;
+	size_t Format(char *buffer, size_t maxlength, const char *format, ...) override;
+	size_t FormatArgs(char *buffer, size_t maxlength, const char *format, va_list ap) override;
 public:
-	void LogMsg(ISmmPlugin *pl, const char *msg, ...);
-	CreateInterfaceFn GetEngineFactory(bool syn=true);
-	CreateInterfaceFn GetPhysicsFactory(bool syn=true);
-	CreateInterfaceFn GetFileSystemFactory(bool syn=true);
-	CreateInterfaceFn GetServerFactory(bool syn=true);
-	CGlobalVars *GetCGlobals();
 	void SetLastMetaReturn(META_RES res);
 	META_RES GetLastMetaReturn();
-	IConCommandBaseAccessor *GetCvarBaseAccessor();
-	bool RegisterConCommandBase(ISmmPlugin *plugin, ConCommandBase *pCommand);
-	void UnregisterConCommandBase(ISmmPlugin *plugin, ConCommandBase *pCommand);
-	void ConPrint(const char *str);
-	void ConPrintf(const char *fmt, ...);
-	bool RemotePrintingAvailable();
-	void GetApiVersions(int &major, int &minor, int &plvers, int &plmin);
-	void GetShVersions(int &shvers, int &shimpl);
-	void AddListener(ISmmPlugin *plugin, IMetamodListener *pListener);
-	void *MetaFactory(const char *iface, int *ret, PluginId *id);
-	int FormatIface(char iface[], size_t maxlength);
-	void *InterfaceSearch(CreateInterfaceFn fn, const char *iface, int max, int *ret);
-	const char *GetBaseDir();
-	size_t PathFormat(char *buffer, size_t len, const char *fmt, ...);
-#if SOURCE_ENGINE == SE_DOTA
-	// Shim
-	void ClientConPrintf(int clientIndex, const char *fmt, ...);
-#endif
-	void ClientConPrintf(edict_t *client, const char *fmt, ...);
-	void *VInterfaceMatch(CreateInterfaceFn fn, const char *iface, int min=-1);
-	void EnableVSPListener();
-	int GetGameDLLVersion();
-	int GetUserMessageCount();
-	int FindUserMessage(const char *name, int *size=NULL);
-	const char *GetUserMessage(int index, int *size=NULL);
-	int GetVSPVersion();
-	int GetSourceEngineBuild();
-	IServerPluginCallbacks *GetVSPInfo(int *pVersion);
-	size_t Format(char *buffer, size_t maxlength, const char *format, ...);
-	size_t FormatArgs(char *buffer, size_t maxlength, const char *format, va_list ap);
-public:
 	bool IsLoadedAsGameDLL();
 	const char *GetGameBinaryPath();
 	const char *GetPluginsFile();
 	const char *GetVDFDir();
-	void UnregisterConCommandBase(PluginId id, ConCommandBase *pCommand);
+	void UnregisterConCommand(PluginId id, ProviderConCommand *pCommand);
+	void UnregisterConVar(PluginId id, ProviderConVar *pVar);
 	void NotifyVSPListening(IServerPluginCallbacks *callbacks, int version);
-	void SetGameDLLInfo(CreateInterfaceFn serverFactory, int version, bool loaded);
+	const char* GetGameDLLInterfaceName() const;
+	void SetGameDLLInfo(CreateInterfaceFn serverFactory, const char *pGameDllIfaceName, int version, bool loaded);
 	void SetVSPListener(const char *path);
 	size_t GetFullPluginPath(const char *plugin, char *buffer, size_t len);
 };
@@ -107,7 +107,7 @@ public:
 bool
 mm_DetectGameInformation();
 
-void
+int
 mm_LogMessage(const char *msg, ...);
 
 int

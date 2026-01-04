@@ -26,6 +26,8 @@
 #ifndef _INCLUDE_METAMOD_SOURCE_LOADER_BRIDGE_H_
 #define _INCLUDE_METAMOD_SOURCE_LOADER_BRIDGE_H_
 
+#include <cstddef>
+
 typedef void* (*QueryValveInterface)(const char *pName, int *pReturnCode);
 class IServerPluginCallbacks;
 
@@ -53,6 +55,7 @@ struct gamedll_bridge_info
 	QueryValveInterface	gsFactory;
 	void *				pGlobals;
 	unsigned int		dllVersion;
+	const char *		dllInterfaceName;
 	void *				isgd;
 	const char *		vsp_listener_path;
 };

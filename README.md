@@ -14,15 +14,15 @@ mkdir build
 cd build
 ```
 
-You can configure the build Metamod:Source for linux css x86:
+You can configure the build Metamod:Source for linux css amd64:
 ```
-python3 ../configure.py --sdks css --target x86 --enable-optimize
+python3 ../configure.py --sdks css --target x86_64 --enable-optimize
 ```
 
-Configure the build Metamod:Source for pc css x86:
+Configure the build Metamod:Source for pc css amd64:
 ```
 chcp 65001
-py ../configure.py -s css --target x86 --enable-optimize
+py ../configure.py -s css --target x86_64 --enable-optimize
 ```
 
 ---
@@ -36,15 +36,15 @@ mkdir build
 cd build
 ```
 
-You can configure the build Sourcemod for linux css x86:
+You can configure the build Sourcemod for linux css amd64:
 ```
-python3 ../configure.py --sdks css --target x86 --no-mysql --enable-optimize
+python3 ../configure.py --sdks css --target x86_64 --no-mysql --enable-optimize
 ```
 
-Configure the build Sourcemod for pc css x86:
+Configure the build Sourcemod for pc css amd64:
 ```
 chcp 65001
-py ../configure.py -s css --target x86 --no-mysql --enable-optimize
+py ../configure.py -s css --target x86_64 --no-mysql --enable-optimize
 ```
 
 Common build method:
@@ -53,7 +53,7 @@ ambuild
 ```
 > If you can't find msvc c/c++ compiler, try run this in commandline(example):
 ```
-call "E:\vs\VC\Auxiliary\Build\vcvarsall.bat" x86
+call "E:\vs\VC\Auxiliary\Build\vcvarsall.bat" amd64
 ```
 
 General

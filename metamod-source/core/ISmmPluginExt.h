@@ -26,7 +26,7 @@
 #ifndef _INCLUDE_METAMOD_SOURCE_PLUGIN_EXT_H_
 #define _INCLUDE_METAMOD_SOURCE_PLUGIN_EXT_H_
 
-#include <stddef.h>
+#include <cstddef>
 
 /**
  * @file ISmmPluginExt.h Provides an alternate method for loading plugins, 
@@ -63,8 +63,10 @@
 #define SOURCE_ENGINE_MOCK				25				/**< Mock source engine */
 #define SOURCE_ENGINE_PVKII				26				/**< Pirates, Vikings, and Knights II */
 #define SOURCE_ENGINE_MCV				27				/**< Military Conflict: Vietnam */
+#define SOURCE_ENGINE_CS2				28				/**< Counter-Strike 2 */
+#define SOURCE_ENGINE_DEADLOCK			29				/**< Deadlock */
 
-#define METAMOD_PLAPI_VERSION			16				/**< Version of this header file */
+#define METAMOD_PLAPI_VERSION			17				/**< Version of this header file */
 #define METAMOD_PLAPI_NAME				"ISmmPlugin"	/**< Name of the plugin interface */
 
 namespace SourceMM

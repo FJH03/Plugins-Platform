@@ -28,7 +28,7 @@
 #ifndef _INCLUDE_METAMOD_SOURCE_LOADER_UTILITY_H_
 #define _INCLUDE_METAMOD_SOURCE_LOADER_UTILITY_H_
 
-#include <stddef.h>
+#include <cstddef>
 
 extern size_t
 mm_Format(char *buffer, size_t maxlength, const char *fmt, ...);
@@ -68,6 +68,10 @@ mm_GetFileOfAddress(void *pAddr, char *buffer, size_t maxlength);
 
 extern void *
 mm_FindPattern(const void *libPtr, const char *pattern, size_t len);
+
+// True if arg is present, false if not. If arg has no value, buffer will be set to an empty string.
+extern bool
+mm_GetCommandArgument(const char *argName, char *buffer = nullptr, size_t maxlength = 0);
 
 #endif /* _INCLUDE_METAMOD_SOURCE_LOADER_UTILITY_H_ */
 

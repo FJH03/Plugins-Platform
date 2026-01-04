@@ -25,13 +25,13 @@
  * Version: $Id$
  */
 
-#include <stdio.h>
-#include "metamod_oslink.h"
-#include <stdlib.h>
-#include <stdio.h>
+#include <cstdlib>
+#include <cstdio>
 #if defined __linux__ || defined __APPLE__
-#include <errno.h>
+#include <cerrno>
 #endif
+
+#include "metamod_oslink.h"
 
 #if defined __WIN32__ || defined _WIN32 || defined WIN32
 const char *dlerror()
@@ -94,7 +94,7 @@ bool GetFileOfAddress(void *pAddr, char *buffer, size_t maxlength)
 	return true;
 }
 
-#if defined __GNUC__
+#if defined __GNUC__ && defined(NO_MALLOC_OVERRIDE)
 void * operator new(size_t size) {
 	return malloc(size);
 }
