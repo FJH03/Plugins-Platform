@@ -660,3 +660,55 @@ const char *KeyValuesJSONParser::GetTokenDebugText()
 	return "<parse error>";
 }
 
+#ifdef _DEBUG
+
+static void JSONTest_ParseValid( const char *pszData )
+{
+	KeyValuesJSONParser parser( pszData );
+	KeyValues *pFile = parser.ParseFile();
+	Assert( pFile );
+	pFile->deleteThis();
+}
+
+static void JSONTest_ParseInvalid( const char *pszData, const char *pszExpectedErrMsgSnippet, int nExpectedFailureLine )
+{
+	KeyValuesJSONParser parser( pszData );
+	KeyValues *pFile = parser.ParseFile();
+	Assert( pFile == NULL );
+	Assert( V_stristr( parser.m_szErrMsg, pszExpectedErrMsgSnippet ) != NULL );
+	Assert( parser.m_nLine == nExpectedFailureLine );
+}
+
+void TestKeyValuesJSONParser()
+{
+	JSONTest_ParseValid( "{}" );
+	JSONTest_ParseValid( R"JSON({
+		"key": "string_value",
+		"pos_int32": 123,
+		"pos_int64": 123456789012,
+		"neg_int32": -456,
+		"float": -45.23,
+		"pos_exponent": 1e30,
+		"neg_exponent": 1e-16,
+		"decimal_and_exponent": 1.e+30,
+		"no_leading_zero": .7, // we support this, even though strict JSON says it's no good
+		"zero": 0,
+		"true_value": true,
+		"false_value": false,
+		"null_value": null,
+		"with_escaped": "\r \t \n",
+		"unicode": "\u1234 \\u12f3",
+		"array_of_ints": [ 1, 2, 3, -45 ],
+		"empty_array": [],
+		"array_with_stuff_inside": [
+			{}, // this is a comment.
+			[ 0.45, {}, "hello!" ],
+			{ "id": 0 },
+			// Trailing comma above.  Comment here
+		],
+	})JSON" );
+	JSONTest_ParseInvalid( "{ \"key\": 123", "missing", 1 );
+	JSONTest_ParseInvalid( "{ \"key\": 123.4f }", "number", 1 );
+}
+
+#endif

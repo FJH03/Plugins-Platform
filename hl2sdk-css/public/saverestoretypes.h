@@ -102,7 +102,7 @@ struct levellist_t
 
 struct EHandlePlaceholder_t // Engine does some of the game writing (alas, probably shouldn't), but can't see ehandle.h
 {
-	uint32 i;
+	uintp i;
 };
 
 //-------------------------------------
@@ -278,7 +278,7 @@ private:
 
 		CHashElement( const CBaseEntity *pEntity, int index) : pEntity(pEntity), index(index) {}
 		CHashElement( const CBaseEntity *pEntity ) : pEntity(pEntity) {}
-		CHashElement() {}
+		CHashElement() = default;
 	};
 
 	class CHashFuncs
@@ -512,8 +512,14 @@ inline const char *CSaveRestoreSegment::StringFromSymbol( int token )
 ///             compilers. Either way, there's no portable intrinsic.
 
 // Newer GCC versions provide this in this header, older did by default.
-#if !defined( _rotr ) && defined( COMPILER_GCC )
+#if !defined( _rotr ) && defined( COMPILER_GCC ) && !defined( __arm__ ) && !defined( __aarch64__ )
 #include <x86intrin.h>
+#endif
+
+#if !defined ( _rotr )
+inline unsigned _rotr(unsigned x, unsigned n) {
+	 return (x >> n % 32) | (x << (32-n) % 32);
+}
 #endif
 
 inline unsigned int CSaveRestoreSegment::HashString( const char *pszToken )
@@ -522,8 +528,9 @@ inline unsigned int CSaveRestoreSegment::HashString( const char *pszToken )
 	unsigned int	hash = 0;
 
 	while ( *pszToken )
+	{
 		hash = _rotr( hash, 4 ) ^ *pszToken++;
-
+	}
 	return hash;
 }
 

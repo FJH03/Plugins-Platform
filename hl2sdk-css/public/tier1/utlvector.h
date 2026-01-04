@@ -182,6 +182,7 @@ public:
 
 	// Purges the list and calls delete on each element in it.
 	void PurgeAndDeleteElements();
+	void PurgeAndDeleteElementsArray();
 
 	// Compacts the vector to the number of elements actually in use 
 	void Compact();
@@ -324,9 +325,12 @@ public:
 // Especialy useful if you have a lot of vectors that are sparse, or if you're
 // carefully packing holders of vectors
 //-----------------------------------------------------------------------------
+
+#ifdef _WIN32
 #pragma warning(push)
 #pragma warning(disable : 4200) // warning C4200: nonstandard extension used : zero-sized array in struct/union
 #pragma warning(disable : 4815 ) // warning C4815: 'staticData' : zero-sized array in stack object will have no elements
+#endif
 
 class CUtlVectorUltraConservativeAllocator
 {
@@ -472,6 +476,18 @@ public:
 		}
 	}
 
+	void PurgeAndDeleteElementsArray()
+	{
+		if ( m_pData != StaticData() )
+		{
+			for( int i=0; i < m_pData->m_Size; i++ )
+			{
+				delete[] Element(i);
+			}
+			RemoveAll();
+		}
+	}
+
 	void FastRemove( int elem )
 	{
 		Assert( IsValidIndex(elem) );
@@ -573,7 +589,9 @@ private:
 	}
 };
 
+#ifdef _WIN32
 #pragma warning(pop)
+#endif
 
 // Make sure nobody adds multiple inheritance and makes this class bigger.
 COMPILE_TIME_ASSERT( sizeof(CUtlVectorUltraConservative<int>) == sizeof(void*) );
@@ -594,23 +612,6 @@ public:
 	CCopyableUtlVector( T* pMemory, int numElements ) : BaseClass( pMemory, numElements ) {}
 	virtual ~CCopyableUtlVector() {}
 	CCopyableUtlVector( CCopyableUtlVector const& vec ) { this->CopyArray( vec.Base(), vec.Count() ); }
-};
-
-//-----------------------------------------------------------------------------
-// The CCopyableUtlVector class:
-// A array class that allows copy construction (so you can nest a CUtlVector inside of another one of our containers)
-//  WARNING - this class lets you copy construct which can be an expensive operation if you don't carefully control when it happens
-// Only use this when nesting a CUtlVector() inside of another one of our container classes (i.e a CUtlMap)
-//-----------------------------------------------------------------------------
-template< class T, size_t MAX_SIZE >
-class CCopyableUtlVectorFixedGrowable : public CUtlVectorFixedGrowable< T, MAX_SIZE >
-{
-	typedef CUtlVectorFixedGrowable< T, MAX_SIZE > BaseClass;
-public:
-	explicit CCopyableUtlVectorFixedGrowable( int growSize = 0 ) : BaseClass( growSize ) {}
-	CCopyableUtlVectorFixedGrowable( T* pMemory, int numElements ) : BaseClass( pMemory, numElements ) {}
-	virtual ~CCopyableUtlVectorFixedGrowable() {}
-	CCopyableUtlVectorFixedGrowable( CCopyableUtlVectorFixedGrowable const& vec ) { this->CopyArray( vec.Base(), vec.Count() ); }
 };
 
 //-----------------------------------------------------------------------------
@@ -667,7 +668,19 @@ inline CUtlVector<T, A>& CUtlVector<T, A>::operator=( const CUtlVector<T, A> &ot
 	return *this;
 }
 
+#ifdef STAGING_ONLY
+inline void StagingUtlVectorBoundsCheck( int i, int size )
+{
+	if ( (unsigned)i >= (unsigned)size )
+	{
+		Msg( "Array access error: %d / %d\n", i, size );
+		DebuggerBreak();
+	}
+}
+
+#else
 #define StagingUtlVectorBoundsCheck( _i, _size )
+#endif
 
 //-----------------------------------------------------------------------------
 // element access
@@ -1414,6 +1427,17 @@ inline void CUtlVector<T, A>::PurgeAndDeleteElements()
 }
 
 template< typename T, class A >
+inline void CUtlVector<T, A>::PurgeAndDeleteElementsArray()
+{
+	for( int i=0; i < m_Size; i++ )
+	{
+		delete[] Element(i);
+	}
+	RemoveAll();
+}
+
+
+template< typename T, class A >
 inline void CUtlVector<T, A>::Compact()
 {
 	m_Memory.Purge(m_Size);
@@ -1441,23 +1465,16 @@ void CUtlVector<T, A>::Validate( CValidator &validator, char *pchName )
 }
 #endif // DBGFLAG_VALIDATE
 
-// A vector class for storing pointers, so that the elements pointed to by the pointers are deleted
-// on exit.
-template<class T> class CUtlVectorAutoPurge : public CUtlVector< T, CUtlMemory< T, int> >
-{
-public:
-	~CUtlVectorAutoPurge( void )
-	{
-		this->PurgeAndDeleteElements();
-	}
-
-};
-
 // easy string list class with dynamically allocated strings. For use with V_SplitString, etc.
 // Frees the dynamic strings in destructor.
-class CUtlStringList : public CUtlVectorAutoPurge< char *>
+class CUtlStringList : public CUtlVector< char*, CUtlMemory< char*, int > >
 {
 public:
+	~CUtlStringList( void )
+	{
+		PurgeAndDeleteElementsArray();
+	}
+
 	void CopyAndAddToTail( char const *pString )			// clone the string and add to the end
 	{
 		char *pNewStr = new char[1 + strlen( pString )];
@@ -1470,7 +1487,7 @@ public:
 		return strcmp( *sz1, *sz2 );
 	}
 
-	CUtlStringList(){}
+	CUtlStringList() = default;
 
 	CUtlStringList( char const *pString, char const *pSeparator )
 	{
@@ -1501,17 +1518,12 @@ private:
 class CSplitString: public CUtlVector<char*, CUtlMemory<char*, int> >
 {
 public:
-	CSplitString() { m_szBuffer = nullptr; }
 	CSplitString(const char *pString, const char *pSeparator);
 	CSplitString(const char *pString, const char **pSeparators, int nSeparators);
 	~CSplitString();
 	//
 	// NOTE: If you want to make Construct() public and implement Purge() here, you'll have to free m_szBuffer there
 	//
-
-	void Set( const char *pString, const char **pSeparators, int nSeparators );
-	void Set( const char *pString, const char *pSeparator );
-
 private:
 	void Construct(const char *pString, const char **pSeparators, int nSeparators);
 	void PurgeAndDeleteElements();
@@ -1519,32 +1531,5 @@ private:
 	char *m_szBuffer; // a copy of original string, with '\0' instead of separators
 };
 
-inline void CSplitString::Set( const char* pString, const char* pSeparator )
-{
-	Set( pString, &pSeparator, 1 );
-}
-
-inline void CSplitString::Set( const char *pString, const char **pSeparators, int nSeparators )
-{
-	if ( m_szBuffer )
-		delete[] m_szBuffer;
-	Construct( pString, pSeparators, nSeparators );
-}
-
-// A fixed growable vector that's castable to CUtlVector
-template< class T, size_t FIXED_SIZE >
-class CUtlVectorFixedGrowableCompat : public CUtlVector< T >
-{
-	typedef CUtlVector< T > BaseClass;
-
-public:
-	// constructor, destructor
-	CUtlVectorFixedGrowableCompat(int growSize = 0) : BaseClass(nullptr, FIXED_SIZE, growSize)
-	{
-		this->m_Memory.m_pMemory = m_FixedMemory.Base();
-	}
-
-	AlignedByteArray_t< FIXED_SIZE, T > m_FixedMemory;
-};
 
 #endif // CCVECTOR_H

@@ -904,8 +904,10 @@ struct surfaceaudioparams_t
 
 struct surfacesoundnames_t
 {
-	unsigned short	stepleft;
-	unsigned short	stepright;
+	unsigned short	walkStepLeft;
+	unsigned short	walkStepRight;
+	unsigned short	runStepLeft;
+	unsigned short	runStepRight;
 
 	unsigned short	impactSoft;
 	unsigned short	impactHard;
@@ -922,8 +924,10 @@ struct surfacesoundnames_t
 
 struct surfacesoundhandles_t
 {
-	short	stepleft;
-	short	stepright;
+	short	walkStepLeft;
+	short	walkStepRight;
+	short	runStepLeft;
+	short	runStepRight;
 
 	short	impactSoft;
 	short	impactHard;
@@ -1030,8 +1034,6 @@ struct fluidparams_t
 		torqueFactor = src.torqueFactor;
 		viscosityFactor = src.viscosityFactor;
 		contents = src.contents;
-		useAerodynamics = src.useAerodynamics;
-		pGameData = nullptr;
 	}
 };
 
@@ -1041,10 +1043,6 @@ struct fluidparams_t
 //-----------------------------------------------------------------------------
 struct springparams_t
 {
-	springparams_t()
-	{
-		memset( this, 0, sizeof(*this) );
-	}
 	float	constant;		// spring constant
 	float	naturalLength;// relaxed length
 	float	damping;		// damping factor

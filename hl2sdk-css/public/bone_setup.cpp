@@ -21,6 +21,8 @@
 #include "convar.h"
 #include "tier0/tslist.h"
 #include "vphysics_interface.h"
+#include "mathlib/compressed_vector.h"
+
 #ifdef CLIENT_DLL
 	#include "posedebugger.h"
 #endif
@@ -378,14 +380,18 @@ void CalcBoneQuaternion( int frame, float s,
 {
 	if ( panim->flags & STUDIO_ANIM_RAWROT )
 	{
-		q = *(panim->pQuat48());
+		Quaternion48 tmp;
+		V_memcpy( &tmp, panim->pQuat48(), sizeof(Quaternion48) );
+		q = tmp;
 		Assert( q.IsValid() );
 		return;
-	} 
-	
+	}
+
 	if ( panim->flags & STUDIO_ANIM_RAWROT2 )
 	{
-		q = *(panim->pQuat64());
+		Quaternion64 tmp;
+		V_memcpy( &tmp, panim->pQuat64(), sizeof(Quaternion64) );
+		q = tmp;
 		Assert( q.IsValid() );
 		return;
 	}
@@ -678,6 +684,11 @@ static void CalcLocalHierarchyAnimation(
 	int boneMask
 	)
 {
+#ifdef STAGING_ONLY
+	Assert( iNewParent == -1 || (iNewParent >= 0 && iNewParent < MAXSTUDIOBONES) );
+	Assert( iBone > 0 );
+	Assert( iBone < MAXSTUDIOBONES );
+#endif // STAGING_ONLY
 
 	Vector localPos;
 	Quaternion localQ;
@@ -1329,6 +1340,7 @@ void WorldSpaceSlerp(
 			Quaternion srcQ, destQ;
 			Vector srcPos, destPos;
 			Quaternion targetQ;
+			Vector targetPos;
 			Vector tmp;
 
 			BuildBoneChain( pStudioHdr, rootXform, pos1, q1, i, destBoneToWorld, destBoneComputed );
@@ -1638,6 +1650,7 @@ void ScaleBones(
 	int boneMask )
 {
 	int			i, j;
+	Quaternion		q3;
 
 	mstudioseqdesc_t &seqdesc = ((CStudioHdr *)pStudioHdr)->pSeqdesc( sequence );
 
@@ -2470,6 +2483,7 @@ void CalcBoneAdj(
 	int					i, j, k;
 	float				value;
 	mstudiobonecontroller_t *pbonecontroller;
+	Vector p0;
 	RadianEuler a0;
 	Quaternion q0;
 	
@@ -3613,6 +3627,7 @@ void CIKTarget::SetNormal( const Vector &normal )
 	MatrixSetColumn( forward, 0, m1 );
 	MatrixSetColumn( right, 1, m1 );
 	MatrixSetColumn( normal, 2, m1 );
+	QAngle a1;
 	Vector p1;
 	MatrixAngles( m1, est.q, p1 );
 }
@@ -3742,6 +3757,7 @@ void CIKContext::UpdateTargets( Vector pos[], Quaternion q[], matrix3x4_t boneTo
 			case IK_GROUND:
 			// case IK_SELF:
 				{
+					matrix3x4_t footTarget;
 					CIKTarget *pTarget = &m_target[pRule->slot];
 					pTarget->chain = pRule->chain;
 					pTarget->type = pRule->type;
@@ -4418,8 +4434,8 @@ void CIKContext::SolveLock(
 	// eval current ik'd bone
 	BuildBoneChain( pos, q, bone, boneToWorld, boneComputed );
 
-	Vector p1, p3;
-	Quaternion q2;
+	Vector p1, p2, p3;
+	Quaternion q2, q3;
 
 	// current p and q
 	MatrixPosition( boneToWorld[bone], p1 );
@@ -4704,6 +4720,7 @@ void DoQuatInterpBone(
 	)
 {
 	matrix3x4_t			bonematrix;
+	Vector				control;
 
 	mstudioquatinterpbone_t *pProc = (mstudioquatinterpbone_t *)pbones[ibone].pProcedure( );
 	if (pProc && pbones[pProc->control].parent != -1)
@@ -5592,18 +5609,20 @@ bool Studio_AnimPosition( mstudioanimdesc_t *panim, float flCycle, Vector &vecPo
 
 	float	flFrame = flCycle * (panim->numframes - 1);
 
+
 	for (int i = 0; i < panim->nummovements; i++)
 	{
-		mstudiomovement_t *pmove = panim->pMovement( i );
+		mstudiomovement_t pmove;
+		// TODO(nillerusr): fix alignment on model loading
+		V_memcpy(&pmove, panim->pMovement( i ), sizeof(mstudiomovement_t));
 
-		if (pmove->endframe >= flFrame)
+		if (pmove.endframe >= flFrame)
 		{
-			float f = (flFrame - prevframe) / (pmove->endframe - prevframe);
+			float f = (flFrame - prevframe) / (pmove.endframe - prevframe);
+			float d = pmove.v0 * f + 0.5 * (pmove.v1 - pmove.v0) * f * f;
 
-			float d = pmove->v0 * f + 0.5 * (pmove->v1 - pmove->v0) * f * f;
-
-			vecPos = vecPos + d * pmove->vector;
-			vecAngle.y = vecAngle.y * (1 - f) + pmove->angle * f;
+			vecPos = vecPos + d * pmove.vector;
+			vecAngle.y = vecAngle.y * (1 - f) + pmove.angle * f;
 			if (iLoops != 0)
 			{
 				mstudiomovement_t *pmoveAnim = panim->pMovement( panim->nummovements - 1 );
@@ -5614,9 +5633,9 @@ bool Studio_AnimPosition( mstudioanimdesc_t *panim, float flCycle, Vector &vecPo
 		}
 		else
 		{
-			prevframe = pmove->endframe;
-			vecPos = pmove->position;
-			vecAngle.y = pmove->angle;
+			prevframe = pmove.endframe;
+			vecPos = pmove.position;
+			vecAngle.y = pmove.angle;
 		}
 	}
 
@@ -5926,6 +5945,8 @@ const char *Studio_GetDefaultSurfaceProps( CStudioHdr *pstudiohdr )
 
 float Studio_GetMass( CStudioHdr *pstudiohdr )
 {
+	if( pstudiohdr == NULL ) return 0.f;
+
 	return pstudiohdr->mass();
 }
 

@@ -12,6 +12,7 @@
 #include "wchartypes.h"
 
 #include "tier0/valve_off.h"
+#include <string.h>
 
 #ifdef _WIN32
 #pragma once
@@ -37,12 +38,24 @@
 #define XBOX_CODELINE_ONLY() Error_Compiling_Code_Only_Valid_in_Xbox_Codeline
 #endif
 
+
+#if !defined(PLATFORM_GLIBC) && defined(LINUX) // fuck musl
+#ifdef nullptr
+#undef nullptr
+#endif
+#define nullptr 0
+#endif
+
+
 // stdio.h
-#ifndef NULL
+#if !defined( NULL ) || defined( PLATFORM_BSD )
+#undef NULL
 #define NULL 0
 #endif
 
+#ifdef POSIX
 #include <stdint.h>
+#endif
 
 #define ExecuteNTimes( nTimes, x )	\
 	{								\
@@ -123,31 +136,25 @@ T Max( T const &val1, T const &val2 )
 
 #endif
 
-#ifndef USE_DXVK_NATIVE
-#ifndef DONT_DEFINE_BOOL // Needed for Cocoa stuff to compile.
-typedef int BOOL;
-#endif
-typedef unsigned char BYTE;
-#else
-#include <windows.h>
-#endif
-typedef int qboolean;
-typedef unsigned char byte;
-typedef unsigned short word;
-
-#ifdef _WIN32
-typedef wchar_t ucs2; // under windows wchar_t is ucs2
-#else
-typedef unsigned short ucs2;
-#endif
-
 #ifndef FALSE
 #define FALSE 0
 #define TRUE (!FALSE)
 #endif
 
-#ifdef POSIX
-#include <stdint.h>
+
+#ifndef DONT_DEFINE_BOOL // Needed for Cocoa stuff to compile.
+typedef int BOOL;
+#endif
+
+typedef int qboolean;
+typedef unsigned long ULONG;
+typedef unsigned char BYTE;
+typedef unsigned char byte;
+typedef unsigned short word;
+#ifdef _WIN32
+typedef wchar_t ucs2; // under windows wchar_t is ucs2
+#else
+typedef unsigned short ucs2;
 #endif
 
 enum ThreeState_t
@@ -163,15 +170,8 @@ typedef float vec_t;
 #define fpmin __builtin_fminf
 #define fpmax __builtin_fmaxf
 #elif !defined(_X360)
-static inline float fpmin( float a, float b )
-{
-	return a > b  ? b : a;
-}
-
-static inline float fpmax( float a, float b )
-{
-	return a >= b ? a : b;
-}
+#define fpmin min
+#define fpmax max
 #endif
 
 
@@ -180,19 +180,28 @@ static inline float fpmax( float a, float b )
 // This assumes the ANSI/IEEE 754-1985 standard
 //-----------------------------------------------------------------------------
 
+// MoeMod : fix reinterpret_cast UB - Maybe fail with strict alias
+union FloatCast_u
+{
+    vec_t f;
+    unsigned int i;
+};
+
 inline unsigned int& FloatBits( vec_t& f )
 {
-	return *reinterpret_cast<unsigned int*>(&f);
+	return reinterpret_cast<FloatCast_u *>(&f)->i;
 }
 
 inline unsigned int const& FloatBits( vec_t const& f )
 {
-	return *reinterpret_cast<unsigned int const*>(&f);
+	return reinterpret_cast<FloatCast_u const*>(&f)->i;
 }
 
 inline vec_t BitsToFloat( unsigned int i )
 {
-	return *reinterpret_cast<vec_t*>(&i);
+	vec_t f;
+	memcpy( &f, &i, sizeof(f));
+	return f;
 }
 
 inline bool IsFinite( vec_t f )
@@ -211,7 +220,7 @@ inline unsigned int FloatAbsBits( vec_t f )
 #ifndef _In_
 #define _In_
 #endif
-extern "C" _Check_return_ __inline float __CRTDECL fabsf(_In_ float _X);
+extern "C" float fabsf(_In_ float);
 #else
 #include <math.h>
 #endif
@@ -325,7 +334,7 @@ template< class DummyType >
 class CIntHandle16 : public CBaseIntHandle< unsigned short >
 {
 public:
-	inline			CIntHandle16() {}
+	inline			CIntHandle16() = default;
 
 	static inline	CIntHandle16<DummyType> MakeHandle( HANDLE_TYPE val )
 	{
@@ -344,7 +353,7 @@ template< class DummyType >
 class CIntHandle32 : public CBaseIntHandle< unsigned long >
 {
 public:
-	inline			CIntHandle32() {}
+	inline			CIntHandle32() = default;
 
 	static inline	CIntHandle32<DummyType> MakeHandle( HANDLE_TYPE val )
 	{

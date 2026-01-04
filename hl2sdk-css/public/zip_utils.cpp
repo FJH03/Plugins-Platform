@@ -174,24 +174,24 @@ class CWin32File
 public:
 	static HANDLE CreateTempFile( CUtlString &WritePath, CUtlString &FileName )
 	{
-		FILE *hFile = (FILE *)INVALID_HANDLE_VALUE;
-
 		char tempFileName[MAX_PATH];
 		if ( WritePath.IsEmpty() )
 		{
-			char mktName[MAX_PATH];
-
 			// use a safe name in the cwd
-			// mktemp requires a writable string.
-			V_strcpy_safe( mktName, "_fstXXXXXX.tmp" );
-			int nFileDescriptor = mkstemps( mktName, 4 );
-			if ( nFileDescriptor == -1 )
+			char *pBuffer = tmpnam( NULL );
+			if ( !pBuffer )
 			{
 				return INVALID_HANDLE_VALUE;
 			}
-			
-			FileName = mktName;
-			hFile = fdopen( nFileDescriptor, "rw+" );
+			if ( pBuffer[0] == '\\' )
+			{
+				pBuffer++;
+			}
+			if ( pBuffer[strlen( pBuffer )-1] == '.' )
+			{
+				pBuffer[strlen( pBuffer )-1] = '\0';
+			}
+			V_snprintf( tempFileName, sizeof( tempFileName ), "_%s.tmp", pBuffer );
 		}
 		else
 		{
@@ -199,15 +199,13 @@ public:
 			static int counter = 0;
 			time_t now = time( NULL );
 			struct tm *tm = localtime( &now );
-			V_sprintf_safe( uniqueFilename, "%d_%d_%d_%d_%d.tmp", tm->tm_wday, tm->tm_hour, tm->tm_min, tm->tm_sec, ++counter );
-
-			char tempFileName[MAX_PATH];
+			sprintf( uniqueFilename, "%d_%d_%d_%d_%d.tmp", tm->tm_wday, tm->tm_hour, tm->tm_min, tm->tm_sec, ++counter );                                                \
 			V_ComposeFileName( WritePath.String(), uniqueFilename, tempFileName, sizeof( tempFileName ) );
-
-			FileName = tempFileName;
-			hFile = fopen( tempFileName, "rw+" );
 		}
 
+		FileName = tempFileName;
+		FILE *hFile = fopen( tempFileName, "rw+" );
+		
 		return (HANDLE)hFile;
 	}
 
@@ -661,8 +659,10 @@ void CZipFile::ParseFromBuffer( void *buffer, int bufferlength )
 			if ( rec.commentLength )
 			{
 				char commentString[128] = { 0 };
-				int commentLength = (int)Min( (size_t)rec.commentLength, sizeof( commentString ) - 1 );
+				int commentLength = min( (int)rec.commentLength, (int)sizeof( commentString ) );
 				buf.Get( commentString, commentLength );
+				if ( commentLength == sizeof( commentString ) )
+					--commentLength;
 				commentString[commentLength] = '\0';
 				ParseXZipCommentString( commentString );
 			}
@@ -705,7 +705,7 @@ void CZipFile::ParseFromBuffer( void *buffer, int bufferlength )
 		}
 
 		char tmpString[MAX_PATH] = { 0 };
-		buf.Get( tmpString, Min( (unsigned int)zipFileHeader.fileNameLength, (unsigned int)sizeof( tmpString ) - 1 ) );
+		buf.Get( tmpString, Min( (unsigned int)zipFileHeader.fileNameLength, (unsigned int)sizeof( tmpString ) ) );
 		Q_strlower( tmpString );
 
 		// can determine actual filepos, assuming a well formed zip
@@ -816,9 +816,11 @@ HANDLE CZipFile::ParseFromDisk( const char *pFilename )
 			if ( rec.commentLength )
 			{
 				char commentString[128] = { 0 };
-				int commentLength = min( (int)rec.commentLength, (int)sizeof( commentString ) - 1 );
+				int commentLength = min( (int)rec.commentLength, (int)sizeof( commentString ) );
 				CWin32File::FileRead( hFile, commentString, commentLength );
-				commentString[ commentLength ] = '\0';
+				if ( commentLength == sizeof( commentString ) )
+					--commentLength;
+				commentString[commentLength] = '\0';
 				ParseXZipCommentString( commentString );
 			}
 			break;
@@ -871,7 +873,7 @@ HANDLE CZipFile::ParseFromDisk( const char *pFilename )
 		}
 
 		char fileName[MAX_PATH] = { 0 };
-		zipDirBuff.Get( fileName, Min( zipFileHeader.fileNameLength, ( unsigned short )( sizeof( fileName ) - 1 ) ) );
+		zipDirBuff.Get( fileName, Min( (size_t)zipFileHeader.fileNameLength, sizeof( fileName ) - 1 ) );
 		Q_strlower( fileName );
 
 		// can determine actual filepos, assuming a well formed zip
@@ -1358,10 +1360,10 @@ unsigned int CZipFile::CalculateSize( void )
 
 		// local file header
 		size += sizeof( ZIP_LocalFileHeader );
-		size += V_strlen( e->m_Name.String() );
+		size += strlen( e->m_Name.String() );
 
 		// every file has a directory header that duplicates the filename 
-		dirHeaders += sizeof( ZIP_FileHeader ) + V_strlen( e->m_Name.String() );
+		dirHeaders += sizeof( ZIP_FileHeader ) + strlen( e->m_Name.String() );
 
 		// calculate padding
 		if ( m_AlignmentSize != 0 )
@@ -1551,14 +1553,14 @@ void CZipFile::SaveDirectory( IWriteStream& stream )
 			const char *pFilename = e->m_Name.String();
 			hdr.compressedSize = e->m_nCompressedSize;
 			hdr.uncompressedSize = e->m_nUncompressedSize;
-			hdr.fileNameLength = V_strlen( pFilename );
+			hdr.fileNameLength = strlen( pFilename );
 			hdr.extraFieldLength = CalculatePadding( hdr.fileNameLength, e->m_ZipOffset );
 			int extraFieldLength = hdr.extraFieldLength;
 
 			// Swap header in place
 			m_Swap.SwapFieldsToTargetEndian( &hdr );
 			stream.Put( &hdr, sizeof( hdr ) );
-			stream.Put( pFilename, V_strlen( pFilename ) );
+			stream.Put( pFilename, strlen( pFilename ) );
 			stream.Put( pPaddingBuffer, extraFieldLength );
 			stream.Put( e->m_pData, e->m_nCompressedSize );
 
@@ -1567,7 +1569,7 @@ void CZipFile::SaveDirectory( IWriteStream& stream )
 				free( e->m_pData );
 
 				// temp hackery for the logic below to succeed
-				e->m_pData = (void*)0xFFFFFFFF;
+				e->m_pData = (void*)-1;
 			}
 		}
 	}
@@ -1617,7 +1619,7 @@ void CZipFile::SaveDirectory( IWriteStream& stream )
 
 			hdr.compressedSize = e->m_nCompressedSize;
 			hdr.uncompressedSize = e->m_nUncompressedSize;
-			hdr.fileNameLength = V_strlen( e->m_Name.String() );
+			hdr.fileNameLength = strlen( e->m_Name.String() );
 			hdr.extraFieldLength = CalculatePadding( hdr.fileNameLength, e->m_ZipOffset );
 			hdr.fileCommentLength = 0;
 			hdr.diskNumberStart = 0;
@@ -1629,7 +1631,7 @@ void CZipFile::SaveDirectory( IWriteStream& stream )
 			// Swap the header in place
 			m_Swap.SwapFieldsToTargetEndian( &hdr );
 			stream.Put( &hdr, sizeof( hdr ) );
-			stream.Put( e->m_Name.String(), V_strlen( e->m_Name.String() ) );
+			stream.Put( e->m_Name.String(), strlen( e->m_Name.String() ) );
 			if ( m_bCompatibleFormat )
 			{
 				stream.Put( pPaddingBuffer, extraFieldLength );

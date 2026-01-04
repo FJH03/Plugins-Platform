@@ -28,7 +28,9 @@
 #endif
 
 // Undefine this if using a compiler lacking threadsafe RTTI (like vc6)
+#ifndef COMPILER_MSVC
 #define MEM_DEBUG_CLASSNAME 1
+#endif
 
 #include <stddef.h>
 #if defined( OSX )
@@ -96,8 +98,8 @@ public:
 	virtual bool IsDebugHeap() = 0;
 
 	virtual void GetActualDbgInfo( const char *&pFileName, int &nLine ) = 0;
-	virtual void RegisterAllocation( const char *pFileName, int nLine, int nLogicalSize, int nActualSize, unsigned nTime ) = 0;
-	virtual void RegisterDeallocation( const char *pFileName, int nLine, int nLogicalSize, int nActualSize, unsigned nTime ) = 0;
+	virtual void RegisterAllocation( const char *pFileName, int nLine, size_t nLogicalSize, size_t nActualSize, unsigned nTime ) = 0;
+	virtual void RegisterDeallocation( const char *pFileName, int nLine, size_t nLogicalSize, size_t nActualSize, unsigned nTime ) = 0;
 
 	virtual int GetVersion() = 0;
 
@@ -330,7 +332,7 @@ inline size_t MemAlloc_GetSizeAligned( void *pMemBlock )
 
 //-----------------------------------------------------------------------------
 
-#if defined(USE_MEM_DEBUG)
+#if (defined(_DEBUG) || defined(USE_MEM_DEBUG))
 #define MEM_ALLOC_CREDIT_JOIN_AGAIN( a, b )							a ## b
 #define MEM_ALLOC_CREDIT_JOIN( a, b )								MEM_ALLOC_CREDIT_JOIN_AGAIN( a, b )
 #define MEM_ALLOC_CREDIT_(tag)										CMemAllocAttributeAlloction MEM_ALLOC_CREDIT_JOIN( memAllocAttributeAlloction, __LINE__ )( tag, __LINE__ )
@@ -379,11 +381,11 @@ public:
 
 //-----------------------------------------------------------------------------
 
-#if defined(_WIN32) && defined(USE_MEM_DEBUG)
+#if defined(_WIN32) && ( defined(_DEBUG) || defined(USE_MEM_DEBUG) )
 
 	#pragma warning(disable:4290)
 	#pragma warning(push)
-	#include <typeinfo.h>
+	#include <typeinfo>
 
 	// MEM_DEBUG_CLASSNAME is opt-in.
 	// Note: typeid().name() is not threadsafe, so if the project needs to access it in multiple threads
@@ -412,7 +414,7 @@ public:
 
 //-----------------------------------------------------------------------------
 
-#if defined(USE_MEM_DEBUG)
+#if (defined(_DEBUG) || defined(USE_MEM_DEBUG))
 struct MemAllocFileLine_t
 {
 	const char *pszFile;
@@ -473,9 +475,14 @@ inline void MemAlloc_CheckAlloc( void *ptr, size_t nSize )
 }
 
 #if defined( OSX )
-// Mac always aligns allocs, don't need to call posix_memalign which doesn't exist in 10.5.8 which TF2 still needs to run on
-//inline void *memalign(size_t alignment, size_t size) {void *pTmp=NULL; posix_memalign(&pTmp, alignment, size); return pTmp;}
-inline void *memalign(size_t alignment, size_t size) {void *pTmp=NULL; pTmp = malloc(size); MemAlloc_CheckAlloc( pTmp, size ); return pTmp;}
+inline void *memalign(size_t alignment, size_t size) {
+    // MoeMod : 64bit fix
+    if(alignment < sizeof(void *))
+        alignment = sizeof(void *);
+    void *pTmp = nullptr;
+    posix_memalign(&pTmp, alignment, size);
+    return pTmp;
+}
 #endif
 
 inline void *_aligned_malloc( size_t nSize, size_t align )															{ void *ptr = memalign( align, nSize ); MemAlloc_CheckAlloc( ptr, nSize ); return ptr;  }

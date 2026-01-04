@@ -141,7 +141,7 @@ inline unsigned GetEndMask( int numBits )
 }
 
 
-inline int GetBitForBitnum( int bitNum ) 
+inline uint GetBitForBitnum( int bitNum ) 
 { 
 	static int bitsForBitnum[] = 
 	{
@@ -266,8 +266,8 @@ public:
 	void	SetDWord(int i, uint32 val);
 
 	CBitVecT<BASE_OPS>&	operator=(const CBitVecT<BASE_OPS> &other)	{ other.CopyTo( this ); return *this; }
-	bool			operator==(const CBitVecT<BASE_OPS> &other) const { return Compare( other ); }
-	bool			operator!=(const CBitVecT<BASE_OPS> &other) const { return !operator==( other ); }
+	bool			operator==(const CBitVecT<BASE_OPS> &other)		{ return Compare( other ); }
+	bool			operator!=(const CBitVecT<BASE_OPS> &other)		{ return !operator==( other ); }
 
 	static void GetOffsetMaskForBit( uint32 bitNum, uint32 *pOffset, uint32 *pMask )	{ *pOffset = BitVec_Int( bitNum ); *pMask = BitVec_Bit( bitNum ); }
 };
@@ -373,7 +373,7 @@ public:
 	int		FindNextSetBit(int iStartBit) const; // returns -1 if no set bit was found
 
 protected:
-	CFixedBitVecBase()				{}
+	CFixedBitVecBase() = default;
 	CFixedBitVecBase(int numBits)	{ Assert( numBits == NUM_BITS ); } // doesn't make sense, really. Supported to simplify templates & allow easy replacement of variable 
 	
 	void 		ValidateOperand( const CFixedBitVecBase<NUM_BITS> &operand ) const	{ } // no need, compiler does so statically
@@ -428,10 +428,8 @@ template < int NUM_BITS >
 class CBitVec : public CBitVecT< CFixedBitVecBase<NUM_BITS> >
 {
 public:
-	CBitVec()
-	{
-	}
-	
+	CBitVec() = default;
+
 	CBitVec(int numBits)
 	 : CBitVecT< CFixedBitVecBase<NUM_BITS> >(numBits)
 	{
@@ -448,7 +446,7 @@ typedef CBitVec<32> CDWordBitVec;
 template <typename BITCOUNTTYPE>
 inline CVarBitVecBase<BITCOUNTTYPE>::CVarBitVecBase()
 {
-	Plat_FastMemset( (void*)this, 0, sizeof( *this ) );
+	Plat_FastMemset( this, 0, sizeof( *this ) );
 }
 
 //-----------------------------------------------------------------------------

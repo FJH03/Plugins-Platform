@@ -48,6 +48,15 @@
 
 class Color;
 
+class IDbgLogger
+{
+public:
+	virtual void Init(const char *logfile) = 0;
+	virtual void Write(const char *data) = 0;
+	virtual void Disable() = 0;
+};
+
+PLATFORM_INTERFACE IDbgLogger *DebugLogger();
 
 //-----------------------------------------------------------------------------
 // Usage model for the Dbg library
@@ -204,7 +213,6 @@ DBG_INTERFACE void   _SpewInfo( SpewType_t type, const tchar* pFile, int line );
 DBG_INTERFACE SpewRetval_t   _SpewMessage( PRINTF_FORMAT_STRING const tchar* pMsg, ... ) FMTFUNCTION( 1, 2 );
 DBG_INTERFACE SpewRetval_t   _DSpewMessage( const tchar *pGroupName, int level, PRINTF_FORMAT_STRING const tchar* pMsg, ... ) FMTFUNCTION( 3, 4 );
 DBG_INTERFACE SpewRetval_t   ColorSpewMessage( SpewType_t type, const Color *pColor, PRINTF_FORMAT_STRING const tchar* pMsg, ... ) FMTFUNCTION( 3, 4 );
-DBG_INTERFACE SpewRetval_t   ColorSpewMessage2( SpewType_t type, const Color &color, PRINTF_FORMAT_STRING const tchar* pMsg, ... ) FMTFUNCTION( 3, 4 );
 DBG_INTERFACE void _ExitOnFatalAssert( const tchar* pFile, int line );
 DBG_INTERFACE bool ShouldUseNewAssertDialog();
 
@@ -351,6 +359,18 @@ DBG_INTERFACE struct SDL_Window * GetAssertDialogParent();
 #define  VerifyEquals( _exp, _expectedValue )           	AssertEquals( _exp, _expectedValue )
 #define  DbgVerify( _exp )           						Assert( _exp )
 
+#ifdef _DEBUG
+#define DbgAssert( _exp )	Assert( _exp )
+#else
+#define DbgAssert( _exp )	((void)0)
+#endif
+
+#ifdef _DEBUG
+#define DbgAssert( _exp )	Assert( _exp )
+#else
+#define DbgAssert( _exp )	((void)0)
+#endif
+
 #define  AssertMsg1( _exp, _msg, a1 )									AssertMsg( _exp, _msg, a1 )
 #define  AssertMsg2( _exp, _msg, a1, a2 )								AssertMsg( _exp, _msg, a1, a2 )
 #define  AssertMsg3( _exp, _msg, a1, a2, a3 )							AssertMsg( _exp, _msg, a1, a2, a3 )
@@ -376,6 +396,7 @@ DBG_INTERFACE struct SDL_Window * GetAssertDialogParent();
 #define	 VerifyMsg3( _exp, _msg, a1, a2, a3 )				(_exp)
 #define  VerifyEquals( _exp, _expectedValue )           	(_exp)
 #define  DbgVerify( _exp )									(_exp)
+#define	 DbgAssert( _exp )									((void)0)
 
 #define  AssertMsg1( _exp, _msg, a1 )									((void)0)
 #define  AssertMsg2( _exp, _msg, a1, a2 )								((void)0)
@@ -389,6 +410,9 @@ DBG_INTERFACE struct SDL_Window * GetAssertDialogParent();
 #define  AssertMsg9( _exp, _msg, a1, a2, a3, a4, a5, a6, a7, a8, a9 )	((void)0)
 
 #endif // DBGFLAG_ASSERT
+
+// Source2 compatibility macro
+#define AssertDbg( X ) DbgAssert( X )
 
 // The Always version of the assert macros are defined even when DBGFLAG_ASSERT is not, 
 // so they will be available even in release.
@@ -558,11 +582,14 @@ public:
 #define SCOPE_MSG( msg )
 #endif
 
-//-----------------------------------------------------------------------------
-// Utilities to suppress warnings or other annotations
 
-// Note a variable is possibly unused to avoid analyzer warnings
-template< typename T > static FORCEINLINE void NoteUnused( const T& foo ) { return; }
+//-----------------------------------------------------------------------------
+// This macro predates universal static_assert support in our toolchains
+#define COMPILE_TIME_ASSERT( pred ) static_assert( pred, "Compile time assert constraint is not true: " #pred )
+
+// ASSERT_INVARIANT used to be needed in order to allow COMPILE_TIME_ASSERTs at global
+// scope. However the new COMPILE_TIME_ASSERT macro supports that by default.
+#define ASSERT_INVARIANT( pred )	COMPILE_TIME_ASSERT( pred )
 
 // NOTE: On GCC / Clang, assert_cast can sometimes fire even if the type is correct. We should just workaround these.
 // The situation where this would occur is 
@@ -599,7 +626,6 @@ FORCEINLINE void AssertValidReadWritePtr( const void* ptr, int count = 1 )	{ _As
 #else
 
 FORCEINLINE void AssertValidReadPtr( const void* ptr, int count = 1 )			 { }
-FORCEINLINE void AssertValidReadPtr( const void* ptr, size_t count )			 { }
 FORCEINLINE void AssertValidWritePtr( const void* ptr, int count = 1 )		     { }
 FORCEINLINE void AssertValidReadWritePtr( const void* ptr, int count = 1 )	     { }
 #define AssertValidStringPtr AssertValidReadPtr
@@ -810,20 +836,9 @@ private:
 
 
 // This is horrible, but we don't want to integrate CS:GO new logging system atm.
-
-#ifdef BUILDING_VPC
-#define Log_Warning( ignore, ... )	::Warning( __VA_ARGS__ );
-#define Log_Msg( ignore, ... )		::Msg( __VA_ARGS__ );
+#define Log_Warning( ignore, ... )	::Msg( __VA_ARGS__ ); ::Log( __VA_ARGS__ );
+#define Log_Msg( ignore, ... )		::Warning( __VA_ARGS__ ); ::Log( __VA_ARGS__ );
 #define Log_Error( ignore, ... )		::Error( __VA_ARGS__ );
-#else
-#define Log_Warning( ignore, ... )	::Warning( __VA_ARGS__ ); ::Log( __VA_ARGS__ );
-#define Log_Msg( ignore, ... )		::Msg( __VA_ARGS__ ); ::Log( __VA_ARGS__ );
-#define Log_Error( ignore, ... )		::Error( __VA_ARGS__ );
-#endif
-#define Log_Warning_Color( ignore, ... )	::ColorSpewMessage2( SPEW_WARNING, __VA_ARGS__ );
-#define Log_Msg_Color( ignore, ... )	::ColorSpewMessage2( SPEW_MESSAGE, __VA_ARGS__ );
-#define Log_Error_Color( ignore, ... )	::ColorSpewMessage2( SPEW_ERROR, __VA_ARGS__ );
-#define DECLARE_LOGGING_CHANNEL( ... );
 #define DEFINE_LOGGING_CHANNEL_NO_TAGS( ... );
 #define Plat_FatalError( ... ) do { Log_Error( LOG_GENERAL, __VA_ARGS__ ); Plat_ExitProcess( EXIT_FAILURE ); } while( 0 )
 

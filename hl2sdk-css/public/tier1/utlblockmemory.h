@@ -21,8 +21,10 @@
 #include "tier0/memalloc.h"
 #include "tier0/memdbgon.h"
 
+#ifdef _WIN32
 #pragma warning (disable:4100)
 #pragma warning (disable:4514)
+#endif
 
 //-----------------------------------------------------------------------------
 
@@ -107,8 +109,8 @@ protected:
 
 	T** m_pMemory;
 	int m_nBlocks;
-	int m_nIndexMask : 27;
-	int m_nIndexShift : 5;
+	int m_nIndexMask;
+	int m_nIndexShift;
 };
 
 //-----------------------------------------------------------------------------
@@ -137,12 +139,8 @@ void CUtlBlockMemory<T,I>::Swap( CUtlBlockMemory< T, I > &mem )
 {
 	V_swap( m_pMemory, mem.m_pMemory );
 	V_swap( m_nBlocks, mem.m_nBlocks );
-	int tmp = m_nIndexMask;
-	m_nIndexMask = mem.m_nIndexMask;
-	mem.m_nIndexMask = tmp;
-	tmp = m_nIndexShift;
-	m_nIndexShift = mem.m_nIndexShift;
-	mem.m_nIndexShift = tmp;
+	V_swap( m_nIndexMask, mem.m_nIndexMask );
+	V_swap( m_nIndexShift, mem.m_nIndexShift );
 }
 
 

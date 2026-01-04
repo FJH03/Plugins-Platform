@@ -100,11 +100,11 @@ private:
 	};
 
 	// Insert a command into the command queue at the appropriate time
-	void InsertCommandAtAppropriateTime( intp hCommand );
+	void InsertCommandAtAppropriateTime( CommandHandle_t hCommand );
 						   
 	// Insert a command into the command queue
 	// Only happens if it's inserted while processing other commands
-	void InsertImmediateCommand( intp hCommand );
+	void InsertImmediateCommand( CommandHandle_t hCommand );
 
 	// Insert a command into the command queue
 	bool InsertCommand( const char *pArgS, int nCommandSize, int nTick );
@@ -119,13 +119,12 @@ private:
 	bool ParseArgV0( CUtlBuffer &buf, char *pArgv0, int nMaxLen, const char **pArgs );
 
 	char	m_pArgSBuffer[ ARGS_BUFFER_LENGTH ];
-	int		m_nLastUsedArgSSize;
 	int		m_nArgSBufferSize;
 	CUtlFixedLinkedList< Command_t >	m_Commands;
 	int		m_nCurrentTick;
 	int		m_nLastTickToProcess;
 	int		m_nWaitDelayTicks;
-	intp	m_hNextCommand;
+    CommandHandle_t		m_hNextCommand;
 	int		m_nMaxArgSBufferLength;
 	bool	m_bIsProcessingCommands;
 	bool	m_bWaitEnabled;

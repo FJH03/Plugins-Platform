@@ -37,8 +37,8 @@
 static const char * s_LastFileLoadingFrom = "unknown"; // just needed for error messages
 
 // Statics for the growable string table
-int (*KeyValues::s_pfGetSymbolForString)( const char *name, bool bCreate ) = &KeyValues::GetSymbolForStringClassic;
-const char *(*KeyValues::s_pfGetStringForSymbol)( int symbol ) = &KeyValues::GetStringForSymbolClassic;
+intp (*KeyValues::s_pfGetSymbolForString)( const char *name, bool bCreate ) = &KeyValues::GetSymbolForStringClassic;
+const char *(*KeyValues::s_pfGetStringForSymbol)( intp symbol ) = &KeyValues::GetStringForSymbolClassic;
 CKeyValuesGrowableStringTable *KeyValues::s_pGrowableStringTable = NULL;
 
 #define KEYVALUES_TOKEN_SIZE	4096
@@ -63,7 +63,7 @@ public:
 
 	// entering a new keyvalues block, save state for errors
 	// Not save symbols instead of pointers because the pointers can move!
-	int Push( int symName )
+	int Push( intp symName )
 	{
 		if ( m_errorIndex < MAX_ERROR_STACK )
 		{
@@ -82,7 +82,7 @@ public:
 	}
 
 	// Allows you to keep the same stack level, but change the name as you parse peers
-	void Reset( int stackLevel, int symName )
+	void Reset( int stackLevel, intp symName )
 	{
 		Assert( stackLevel >= 0 );
 		Assert( stackLevel < m_errorIndex );
@@ -118,7 +118,7 @@ public:
 	}
 
 private:
-	int		m_errorStack[MAX_ERROR_STACK];
+	intp		m_errorStack[MAX_ERROR_STACK];
 	const char *m_pFilename;
 	int		m_errorIndex;
 	int		m_maxErrorIndex;
@@ -138,11 +138,11 @@ public:
 	{
 		g_KeyValuesErrorStack.Pop();
 	}
-	CKeyErrorContext( int symName )
+	CKeyErrorContext( intp symName )
 	{
 		Init( symName );
 	}
-	void Reset( int symName )
+	void Reset( intp symName )
 	{
 		g_KeyValuesErrorStack.Reset( m_stackLevel, symName );
 	}
@@ -151,7 +151,7 @@ public:
 		return m_stackLevel;
 	}
 private:
-	void Init( int symName )
+	void Init( intp symName )
 	{
 		m_stackLevel = g_KeyValuesErrorStack.Push( symName );
 	}
@@ -231,18 +231,18 @@ class CKeyValuesGrowableStringTable
 public: 
 	// Constructor
 	CKeyValuesGrowableStringTable() :
-		m_hashLookup( 2048, 0, 0, m_Functor, m_Functor ),
 		#ifdef PLATFORM_64BITS
 			m_vecStrings( 0, 4 * 512 * 1024 )
 		#else
 			m_vecStrings( 0, 512 * 1024 )
 		#endif
+		, m_hashLookup( 2048, 0, 0, m_Functor, m_Functor )
 	{
 		m_vecStrings.AddToTail( '\0' );
 	}
 
 	// Translates a string to an index
-	int GetSymbolForString( const char *name, bool bCreate = true )
+	intp GetSymbolForString( const char *name, bool bCreate = true )
 	{
 		AUTO_LOCK( m_mutex );
 
@@ -273,7 +273,7 @@ public:
 	}
 
 	// Translates an index back to a string
-	const char *GetStringForSymbol( int symbol )
+	const char *GetStringForSymbol( intp symbol )
 	{
 		return (const char *)m_vecStrings.Base() + symbol;
 	}
@@ -292,7 +292,7 @@ private:
 		void SetCurStringBase( const char *pchCurBase ) { m_pchCurBase = pchCurBase; }
 
 		// The compare function.
-		bool operator()( int nLhs, int nRhs ) const
+		bool operator()( intp nLhs, intp nRhs ) const
 		{
 			const char *pchLhs = nLhs > 0 ? m_pchCurBase + nLhs : m_pchCurString;
 			const char *pchRhs = nRhs > 0 ? m_pchCurBase + nRhs : m_pchCurString;
@@ -313,7 +313,7 @@ private:
 
 	CThreadFastMutex m_mutex;
 	CLookupFunctor	m_Functor;
-	CUtlHash<int, CLookupFunctor &, CLookupFunctor &> m_hashLookup;
+	CUtlHash<intp, CLookupFunctor &, CLookupFunctor &> m_hashLookup;
 	CUtlVector<char> m_vecStrings;
 };
 
@@ -348,22 +348,22 @@ void KeyValues::SetUseGrowableStringTable( bool bUseGrowableTable )
 // Purpose: Bodys of the function pointers used for interacting with the key
 //	name string table
 //-----------------------------------------------------------------------------
-int KeyValues::GetSymbolForStringClassic( const char *name, bool bCreate )
+intp KeyValues::GetSymbolForStringClassic( const char *name, bool bCreate )
 {
 	return KeyValuesSystem()->GetSymbolForString( name, bCreate );
 }
 
-const char *KeyValues::GetStringForSymbolClassic( int symbol )
+const char *KeyValues::GetStringForSymbolClassic( intp symbol )
 {
 	return KeyValuesSystem()->GetStringForSymbol( symbol );
 }
 
-int KeyValues::GetSymbolForStringGrowable( const char *name, bool bCreate )
+intp KeyValues::GetSymbolForStringGrowable( const char *name, bool bCreate )
 {
 	return s_pGrowableStringTable->GetSymbolForString( name, bCreate );
 }
 
-const char *KeyValues::GetStringForSymbolGrowable( int symbol )
+const char *KeyValues::GetStringForSymbolGrowable( intp symbol )
 {
 	return s_pGrowableStringTable->GetStringForSymbol( symbol );
 }
@@ -653,6 +653,10 @@ bool KeyValues::LoadFromFile( IBaseFileSystem *filesystem, const char *resourceN
 	Assert( IsX360() || ( IsPC() && _heapchk() == _HEAPOK ) );
 #endif
 
+#ifdef STAGING_ONLY
+	static bool s_bCacheEnabled = !!CommandLine()->FindParm( "-enable_keyvalues_cache" );
+	const bool bUseCache = s_bCacheEnabled && ( s_pfGetSymbolForString == KeyValues::GetSymbolForStringClassic );
+#else
 	/*
 	People are cheating with the keyvalue cache enabled by doing the below, so disable it.
 
@@ -678,6 +682,7 @@ bool KeyValues::LoadFromFile( IBaseFileSystem *filesystem, const char *resourceN
 	made of vmt files, so valve's sv_pure 1 bull is pretty redundant.
 	*/
 	const bool bUseCache = false;
+#endif
 
 	// If pathID is null, we cannot cache the result because that has a weird iterate-through-a-bunch-of-locations behavior.
 	const bool bUseCacheForRead = bUseCache && !refreshCache && pathID != NULL; 
@@ -965,7 +970,7 @@ void KeyValues::SaveKeyToFile( KeyValues *dat, IBaseFileSystem *filesystem, File
 //-----------------------------------------------------------------------------
 // Purpose: looks up a key by symbol name
 //-----------------------------------------------------------------------------
-KeyValues *KeyValues::FindKey(int keySymbol) const
+KeyValues *KeyValues::FindKey(intp keySymbol) const
 {
 	for (KeyValues *dat = m_pSub; dat != NULL; dat = dat->m_pPeer)
 	{
@@ -988,15 +993,16 @@ KeyValues *KeyValues::FindKey(const char *keyName, bool bCreate)
 		return this;
 
 	// look for '/' characters deliminating sub fields
-	char szBuf[256] = { 0 };
+	char szBuf[256];
 	const char *subStr = strchr(keyName, '/');
 	const char *searchStr = keyName;
 
 	// pull out the substring if it exists
 	if (subStr)
 	{
-		int size = Min( (int)(subStr - keyName + 1), (int)V_ARRAYSIZE( szBuf ) );
-		V_strncpy( szBuf, keyName, size );
+		int size = subStr - keyName;
+		Q_memcpy( szBuf, keyName, size );
+		szBuf[size] = 0;
 		searchStr = szBuf;
 	}
 
@@ -1332,9 +1338,8 @@ uint64 KeyValues::GetUint64( const char *keyName, uint64 defaultValue )
 			return (int)dat->m_flValue;
 		case TYPE_UINT64:
 			return *((uint64 *)dat->m_sValue);
-		case TYPE_PTR:
-			return (uint64)(uintp)dat->m_pValue;
 		case TYPE_INT:
+		case TYPE_PTR:
 		default:
 			return dat->m_iValue;
 		};
@@ -1420,7 +1425,7 @@ const char *KeyValues::GetString( const char *keyName, const char *defaultValue 
 			SetString( keyName, buf );
 			break;
 		case TYPE_PTR:
-			V_snprintf( buf, sizeof( buf ), "%lld", CastPtrToInt64( dat->m_pValue ) );
+			Q_snprintf( buf, sizeof( buf ), "%lld", (int64)dat->m_pValue );
 			SetString( keyName, buf );
 			break;
 		case TYPE_INT:
@@ -1473,7 +1478,7 @@ const wchar_t *KeyValues::GetWString( const char *keyName, const wchar_t *defaul
 			SetWString( keyName, wbuf);
 			break;
 		case TYPE_PTR:
-			swprintf( wbuf, Q_ARRAYSIZE(wbuf), L"%lld", (int64)(size_t)dat->m_pValue );
+			swprintf( wbuf, Q_ARRAYSIZE(wbuf), L"%lld", (int64)dat->m_pValue );
 			SetWString( keyName, wbuf );
 			break;
 		case TYPE_INT:
@@ -1523,17 +1528,12 @@ bool KeyValues::GetBool( const char *keyName, bool defaultValue, bool* optGotDef
 	if ( FindKey( keyName ) )
     {
         if ( optGotDefault )
-		{
-            *optGotDefault = false;
-		}
-
+            (*optGotDefault) = false;
 		return 0 != GetInt( keyName, 0 );
     }
     
     if ( optGotDefault )
-	{
-        *optGotDefault = true;
-	}
+        (*optGotDefault) = true;
 
 	return defaultValue;
 }
@@ -1830,7 +1830,7 @@ void KeyValues::CopyKeyValue( const KeyValues& src, size_t tmpBufferSizeB, char*
 	case TYPE_INT:
 		{
 			m_iValue = src.m_iValue;
-			Q_snprintf( tmpBuffer, (int)tmpBufferSizeB, "%d", m_iValue );
+			Q_snprintf( tmpBuffer, tmpBufferSizeB, "%d", m_iValue );
 			int len = Q_strlen(tmpBuffer) + 1;
 			m_sValue = new char[len];
 			Q_strncpy( m_sValue, tmpBuffer, len  );
@@ -1839,7 +1839,7 @@ void KeyValues::CopyKeyValue( const KeyValues& src, size_t tmpBufferSizeB, char*
 	case TYPE_FLOAT:
 		{
 			m_flValue = src.m_flValue;
-			Q_snprintf( tmpBuffer, (int)tmpBufferSizeB, "%f", m_flValue );
+			Q_snprintf( tmpBuffer, tmpBufferSizeB, "%f", m_flValue );
 			int len = Q_strlen(tmpBuffer) + 1;
 			m_sValue = new char[len];
 			Q_strncpy( m_sValue, tmpBuffer, len );
@@ -2179,36 +2179,32 @@ void KeyValues::RecursiveMergeKeyValues( KeyValues *baseKV )
 	}
 }
 
-bool IsSteamDeck( bool bTrulyHardwareOnly )
+static int s_nSteamDeckCached = -1;
+
+bool IsSteamDeck()
 {
-	static int s_nSteamDeckCached = -1;
-	static int s_nGamepadUICached = -1;
-
-	if ( s_nGamepadUICached == -1 || s_nSteamDeckCached == -1 )
-	{
-		bool bIsDeck = false;
-		bool bIsGamepadUI = false;
-
-		if ( CommandLine()->CheckParm( "-nogamepadui" ) )
-			bIsGamepadUI = false;
-		else if ( CommandLine()->CheckParm( "-gamepadui" ) )
-			bIsGamepadUI = true;
+	if (s_nSteamDeckCached == -1) {
+		if ( CommandLine()->CheckParm( "-nogamepadui" ) != 0 )
+		{
+			s_nSteamDeckCached = 0;
+		}
 		else
 		{
-			const char *deckEnv = getenv( "SteamDeck" );
-			bIsDeck = deckEnv && *deckEnv && atoi( deckEnv ) != 0;
-
-			const char *bigPictureEnv = getenv( "SteamTenFoot" );
-			bIsGamepadUI = bigPictureEnv && *bigPictureEnv && atoi( bigPictureEnv ) != 0;
+			if ( CommandLine()->CheckParm( "-gamepadui" ) != 0 )
+			{
+				s_nSteamDeckCached = 1;
+			}
+			else
+			{
+				char *deck = getenv("SteamDeck");
+				if ( deck == 0 || *deck == 0 )
+					s_nSteamDeckCached = 0;
+				else
+					s_nSteamDeckCached = atoi(deck) != 0;
+			}
 		}
-
-		s_nSteamDeckCached = bIsDeck ? 1 : 0;
-		s_nGamepadUICached = bIsGamepadUI ? 1 : 0;
 	}
-
-	if ( bTrulyHardwareOnly )
-		return s_nSteamDeckCached == 1;
-	return s_nGamepadUICached == 1 || s_nSteamDeckCached == 1;
+	return s_nSteamDeckCached;
 }
 
 //-----------------------------------------------------------------------------
@@ -2232,33 +2228,31 @@ bool EvaluateConditional( const char *str )
 
 	if ( Q_stristr( str, "$X360" ) )
 		return IsX360() ^ bNot;
-	
+
 	if ( Q_stristr( str, "$WIN32" ) )
 		return IsPC() ^ bNot; // hack hack - for now WIN32 really means IsPC
 
 	if ( Q_stristr( str, "$WINDOWS" ) )
 		return IsWindows() ^ bNot;
-	
+
 	if ( Q_stristr( str, "$OSX" ) )
-		return IsOSX() ^ bNot;
-	
+		return bNot;
+
 	if ( Q_stristr( str, "$LINUX" ) )
-		return IsLinux() ^ bNot;
+		return ( IsLinux() || IsBSD() || IsOSX() ) ^ bNot;
 
 	if ( Q_stristr( str, "$POSIX" ) )
 		return IsPosix() ^ bNot;
-	
+
 	return false;
 }
 
-// prevent two threads from entering this at the same time and trying to share the global error reporting and parse buffers
-static CThreadFastMutex g_KVMutex;
+
 //-----------------------------------------------------------------------------
 // Read from a buffer...
 //-----------------------------------------------------------------------------
 bool KeyValues::LoadFromBuffer( char const *resourceName, CUtlBuffer &buf, IBaseFileSystem* pFileSystem, const char *pPathID )
 {
-	AUTO_LOCK( g_KVMutex );
 	KeyValues *pPreviousKey = NULL;
 	KeyValues *pCurrentKey = this;
 	CUtlVector< KeyValues * > includedKeys;
@@ -2692,18 +2686,7 @@ bool KeyValues::WriteAsBinary( CUtlBuffer &buffer )
 			}
 		case TYPE_PTR:
 			{
-#if defined( PLATFORM_64BITS )
-				// We only put an int here, because 32-bit clients do not expect 64 bits. It'll cause them to read the wrong
-				// amount of data and then crash. Longer term, we may bump this up in size on all platforms, but short term 
-				// we don't really have much of a choice other than sticking in something that appears to not be NULL.
-				if ( dat->m_pValue != 0 && ( ( (int)(intp)dat->m_pValue ) == 0 ) )
-					buffer.PutInt( 31337 ); // Put not 0, but not a valid number. Yuck.
-				else
-					buffer.PutInt( ( (int)(intp)dat->m_pValue ) );
-#else
 				buffer.PutPtr( dat->m_pValue );
-#endif
-				break;
 			}
 
 		default:
@@ -2758,8 +2741,7 @@ bool KeyValues::ReadAsBinary( CUtlBuffer &buffer, int nStackDepth )
 		case TYPE_NONE:
 			{
 				dat->m_pSub = new KeyValues("");
-				if ( !dat->m_pSub->ReadAsBinary( buffer, nStackDepth + 1 ) )
-					return false;
+				dat->m_pSub->ReadAsBinary( buffer, nStackDepth + 1 );
 				break;
 			}
 		case TYPE_STRING:
@@ -2776,7 +2758,7 @@ bool KeyValues::ReadAsBinary( CUtlBuffer &buffer, int nStackDepth )
 			}
 		case TYPE_WSTRING:
 			{
-				Assert( !"TYPE_WSTRING" ); // !! MERGE WARNING: Other branches were found to have security issues here, use caution if taking this from another branch (CS:GO known fixed)
+				Assert( !"TYPE_WSTRING" );
 				break;
 			}
 
@@ -2808,14 +2790,7 @@ bool KeyValues::ReadAsBinary( CUtlBuffer &buffer, int nStackDepth )
 			}
 		case TYPE_PTR:
 			{
-#if defined( PLATFORM_64BITS )
-				// We need to ensure we only read 32 bits out of the stream because 32 bit clients only wrote 
-				// 32 bits of data there. The actual pointer is irrelevant, all that we really care about here
-				// contractually is whether the pointer is zero or not zero.
-				dat->m_pValue = ( void* )( intp )buffer.GetInt();
-#else
 				dat->m_pValue = buffer.GetPtr();
-#endif
 			}
 
 		default:
@@ -2862,12 +2837,18 @@ void *KeyValues::operator new( size_t iAllocSize, int nBlockUse, const char *pFi
 //-----------------------------------------------------------------------------
 void KeyValues::operator delete( void *pMem )
 {
-	KeyValuesSystem()->FreeKeyValuesMemory(pMem);
+	if (pMem)
+	{
+		KeyValuesSystem()->FreeKeyValuesMemory(pMem);
+	}
 }
 
 void KeyValues::operator delete( void *pMem, int nBlockUse, const char *pFileName, int nLine )
 {
-	KeyValuesSystem()->FreeKeyValuesMemory(pMem);
+	if (pMem)
+	{
+		KeyValuesSystem()->FreeKeyValuesMemory(pMem);
+	}
 }
 
 void KeyValues::UnpackIntoStructure( KeyValuesUnpackStructure const *pUnpackTable, void *pDest, size_t DestSizeInBytes )

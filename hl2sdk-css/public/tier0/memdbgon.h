@@ -15,6 +15,10 @@
 
 // SPECIAL NOTE #2: This must be the final include in a .cpp or .h file!!!
 
+#if defined(_DEBUG) && !defined(USE_MEM_DEBUG)
+#define USE_MEM_DEBUG 1
+#endif
+
 // If debug build or ndebug and not already included MS custom alloc files, or already included this file
 #if (defined(_DEBUG) || !defined(_INC_CRTDBG)) || defined(MEMDBGON_H)
 
@@ -25,7 +29,11 @@
 #include <wchar.h>
 #endif
 #include <string.h>
+#ifdef OSX
+#include <malloc/malloc.h>
+#else
 #include <malloc.h>
+#endif
 #include "commonmacros.h"
 #include "memalloc.h"
 
@@ -35,7 +43,9 @@
 		#define _NORMAL_BLOCK 1
 		
 		#include <cstddef>
+		#ifndef ANDROID
 		#include <glob.h>
+		#endif
 		#include <new>
 		#include <sys/types.h>
 		#if !defined( DID_THE_OPERATOR_NEW )

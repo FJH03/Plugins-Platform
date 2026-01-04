@@ -8,6 +8,8 @@
 
 #if defined( _X360 )
 #include <xboxmath.h>
+#elif defined(__arm__) || defined(__aarch64__)
+#include "sse2neon.h"
 #else
 #include <xmmintrin.h>
 #endif
@@ -21,7 +23,7 @@
 #define USE_STDC_FOR_SIMD 0
 #endif
 
-#if (!defined(_X360) && (USE_STDC_FOR_SIMD == 0))
+#if !(defined(_X360) && (USE_STDC_FOR_SIMD == 0))
 #define _SSE1 1
 #endif
 
@@ -40,8 +42,6 @@ typedef union
 
 typedef fltx4 i32x4;
 typedef fltx4 u32x4;
-
-typedef fltx4 bi32x4;
 
 #elif ( defined( _X360 ) )
 
@@ -62,8 +62,6 @@ typedef __vector4 u32x4; // a VMX register; just a way of making it explicit tha
 typedef __m128 fltx4;
 typedef __m128 i32x4;
 typedef __m128 u32x4;
-typedef __m128 bi32x4;
-typedef __m128i shortx8;
 
 #endif
 
@@ -617,12 +615,6 @@ FORCEINLINE fltx4 MaskedAssign( const fltx4 & ReplacementMask, const fltx4 & New
 		AndNotSIMD( ReplacementMask, OldValue ) );
 }
 
-// the same as MaskedAssign, only 5 instructions instead of 6
-FORCEINLINE fltx4 SelectSIMD( const fltx4 & ReplacementMask, const fltx4 & NewValue, const fltx4 & OldValue )
-{
-	return XorSIMD( AndSIMD( XorSIMD( NewValue, OldValue ), ReplacementMask ), OldValue );
-}
-
 FORCEINLINE fltx4 ReplicateX4( float flValue )					//  a,a,a,a
 {
 	fltx4 retVal;
@@ -941,10 +933,10 @@ FORCEINLINE fltx4 UnsignedIntConvertToFltSIMD( const u32x4 &vSrcA )
 {
 	Assert(0);			/* pc has no such operation */
 	fltx4 retval;
-	SubFloat( retval, 0 ) = ( (float) SubInt( vSrcA, 0 ) );
-	SubFloat( retval, 1 ) = ( (float) SubInt( vSrcA, 1 ) );
-	SubFloat( retval, 2 ) = ( (float) SubInt( vSrcA, 2 ) );
-	SubFloat( retval, 3 ) = ( (float) SubInt( vSrcA, 3 ) );
+	SubFloat( retval, 0 ) = ( (float) SubInt( retval, 0 ) );
+	SubFloat( retval, 1 ) = ( (float) SubInt( retval, 1 ) );
+	SubFloat( retval, 2 ) = ( (float) SubInt( retval, 2 ) );
+	SubFloat( retval, 3 ) = ( (float) SubInt( retval, 3 ) );
 	return retval;
 }
 
@@ -1228,11 +1220,6 @@ FORCEINLINE fltx4 CmpInBoundsSIMD( const fltx4 & a, const fltx4 & b )		// (a <= 
 FORCEINLINE fltx4 MaskedAssign( const fltx4 & ReplacementMask, const fltx4 & NewValue, const fltx4 & OldValue )
 {
     return __vsel( OldValue, NewValue, ReplacementMask );
-}
-
-FORCEINLINE fltx4 SelectSIMD( const fltx4 & ReplacementMask, const fltx4 & NewValue, const fltx4 & OldValue )
-{
-	return __vsel( OldValue, NewValue, ReplacementMask );
 }
 
 // AKA "Broadcast", "Splat"
@@ -1735,15 +1722,9 @@ FORCEINLINE uint32 & SubInt( fltx4 & a, int idx )
 // Intel/SSE implementation
 //---------------------------------------------------------------------
 
-
 FORCEINLINE void StoreAlignedSIMD( float * RESTRICT pSIMD, const fltx4 & a )
 {
 	_mm_store_ps( pSIMD, a );
-}
-
-FORCEINLINE void StoreAlignedSIMD( short * RESTRICT pSIMD, const shortx8 & a )
-{
-	_mm_store_si128( (shortx8 *)pSIMD, a );
 }
 
 FORCEINLINE void StoreUnalignedSIMD( float * RESTRICT pSIMD, const fltx4 & a )
@@ -1751,10 +1732,6 @@ FORCEINLINE void StoreUnalignedSIMD( float * RESTRICT pSIMD, const fltx4 & a )
 	_mm_storeu_ps( pSIMD, a );
 }
 
-FORCEINLINE void StoreUnalignedSIMD( short* RESTRICT pSIMD, const shortx8& a )
-{
-	_mm_storeu_si128((shortx8*)pSIMD, a);
-}
 
 FORCEINLINE fltx4 RotateLeft( const fltx4 & a );
 FORCEINLINE fltx4 RotateLeft2( const fltx4 & a );
@@ -1775,16 +1752,6 @@ FORCEINLINE void StoreAligned3SIMD( VectorAligned * RESTRICT pSIMD, const fltx4 
 FORCEINLINE fltx4 LoadAlignedSIMD( const void *pSIMD )
 {
 	return _mm_load_ps( reinterpret_cast< const float *> ( pSIMD ) );
-}
-
-FORCEINLINE shortx8 LoadAlignedShortSIMD( const void *pSIMD )
-{
-	return _mm_load_si128( reinterpret_cast< const shortx8 *> ( pSIMD ) );
-}
-
-FORCEINLINE shortx8 LoadUnalignedShortSIMD( const void *pSIMD )
-{
-	return _mm_loadu_si128( reinterpret_cast< const shortx8 *> ( pSIMD ) );
 }
 
 FORCEINLINE fltx4 AndSIMD( const fltx4 & a, const fltx4 & b )				// a & b
@@ -1820,15 +1787,28 @@ FORCEINLINE fltx4 LoadAlignedSIMD( const VectorAligned & pSIMD )
 	return SetWToZeroSIMD( LoadAlignedSIMD(pSIMD.Base()) );
 }
 
-NO_ASAN_FORCEINLINE fltx4 LoadUnalignedSIMD( const void *pSIMD )
+#ifdef USING_ASAN
+static NO_ASAN fltx4 LoadUnalignedSIMD( const void *pSIMD )
+{
+	return _mm_loadu_ps( reinterpret_cast<const float *>( pSIMD ) );
+
+}
+
+static NO_ASAN fltx4 LoadUnaligned3SIMD( const void *pSIMD )
+{
+	return _mm_loadu_ps( reinterpret_cast<const float *>( pSIMD ) );
+}
+#else
+FORCEINLINE fltx4 LoadUnalignedSIMD( const void *pSIMD )
 {
 	return _mm_loadu_ps( reinterpret_cast<const float *>( pSIMD ) );
 }
 
-NO_ASAN_FORCEINLINE fltx4 LoadUnaligned3SIMD( const void *pSIMD )
+FORCEINLINE fltx4 LoadUnaligned3SIMD( const void *pSIMD )
 {
 	return _mm_loadu_ps( reinterpret_cast<const float *>( pSIMD ) );
 }
+#endif
 
 /// replicate a single 32 bit integer value to all 4 components of an m128
 FORCEINLINE fltx4 ReplicateIX4( int i )
@@ -1904,12 +1884,6 @@ FORCEINLINE fltx4 MaskedAssign( const fltx4 & ReplacementMask, const fltx4 & New
 	return OrSIMD(
 		AndSIMD( ReplacementMask, NewValue ),
 		AndNotSIMD( ReplacementMask, OldValue ) );
-}
-
-// the same as MaskedAssign, only 5 instructions instead of 6
-FORCEINLINE fltx4 SelectSIMD( const fltx4 & ReplacementMask, const fltx4 & NewValue, const fltx4 & OldValue )
-{
-	return XorSIMD( AndSIMD( XorSIMD( NewValue, OldValue ), ReplacementMask ), OldValue );
 }
 
 // remember, the SSE numbers its words 3 2 1 0
@@ -2386,10 +2360,6 @@ FORCEINLINE void StoreUnalignedIntSIMD( int32 * RESTRICT pSIMD, const fltx4 & a 
 	_mm_storeu_ps( reinterpret_cast<float *>(pSIMD), a );
 }
 
-FORCEINLINE fltx4 SignedIntConvertToFltSIMD( const shortx8 &vSrcA )
-{
-	return _mm_cvtepi32_ps( vSrcA );
-}
 
 // CHRISG: the conversion functions all seem to operate on m64's only...
 // how do we make them work here?
@@ -2634,13 +2604,20 @@ public:
 		return Vector( X(idx), Y(idx), Z(idx) );
 	}
 	
-	FourVectors() = default;
+	FourVectors(void) = default;
 
 	FourVectors( FourVectors const &src )
 	{
 		x=src.x;
 		y=src.y;
 		z=src.z;
+	}
+
+	FourVectors( fltx4 x, fltx4 y, fltx4 z )
+	{
+		this->x=x;
+		this->y=y;
+		this->z=z;
 	}
 
 	FORCEINLINE void operator=( FourVectors const &src )
@@ -2792,41 +2769,6 @@ public:
 		return v4OurPnt.DistToSqr( lineDelta );
 	}
 
-	FORCEINLINE FourVectors NormalizedSafeX() const
-	{
-		fltx4 f4LenSqr = length2();
-		fltx4 isBigEnough = CmpGeSIMD( f4LenSqr, Four_Epsilons );
-		fltx4 fl4LengthInv = ReciprocalSqrtSIMD( f4LenSqr );
-		FourVectors out;
-		out.x = SelectSIMD( isBigEnough, MulSIMD( x, fl4LengthInv ), Four_Ones );
-		out.y = AndSIMD( MulSIMD( y, fl4LengthInv ), isBigEnough );
-		out.z = AndSIMD( MulSIMD( z, fl4LengthInv ), isBigEnough );
-		return out;
-	}
-
-	FORCEINLINE FourVectors NormalizedSafeY() const
-	{
-		fltx4 f4LenSqr = length2();
-		fltx4 isBigEnough = CmpGeSIMD( f4LenSqr, Four_Epsilons );
-		fltx4 fl4LengthInv = ReciprocalSqrtSIMD( f4LenSqr );
-		FourVectors out;
-		out.x = AndSIMD( MulSIMD( x, fl4LengthInv ), isBigEnough );
-		out.y = SelectSIMD( isBigEnough, MulSIMD( y, fl4LengthInv ), Four_Ones );
-		out.z = AndSIMD( MulSIMD( z, fl4LengthInv ), isBigEnough );
-		return out;
-	}
-
-	FORCEINLINE FourVectors NormalizedSafeZ() const
-	{
-		fltx4 f4LenSqr = length2();
-		fltx4 isBigEnough = CmpGeSIMD( f4LenSqr, Four_Epsilons );
-		fltx4 fl4LengthInv = ReciprocalSqrtSIMD( f4LenSqr );
-		FourVectors out;
-		out.x = AndSIMD( MulSIMD( x, fl4LengthInv ), isBigEnough );
-		out.y = AndSIMD( MulSIMD( y, fl4LengthInv ), isBigEnough );
-		out.z = SelectSIMD( isBigEnough, MulSIMD( z, fl4LengthInv ), Four_Ones );
-		return out;
-	}
 };
 
 /// form 4 cross products
@@ -3153,27 +3095,6 @@ FORCEINLINE fltx4 BiasSIMD( const fltx4 &val, const fltx4 &precalc_param )
 	//!!speed!! use reciprocal est?
 	//!!speed!! could save one op by precalcing _2_ values
 	return DivSIMD( val, AddSIMD( MulSIMD( precalc_param, SubSIMD( Four_Ones, val ) ), Four_Ones ) );
-}
-
-FORCEINLINE fltx4 LoadUnalignedFloatSIMD( const float *pFlt )
-{
-	return _mm_load_ss(pFlt);
-}
-
-inline const fltx4 Length3SIMD( const fltx4 vec )
-{
-	fltx4 scLengthSqr = Dot3SIMD( vec, vec );
-	bi32x4 isSignificant = CmpGtSIMD( scLengthSqr, Four_Epsilons );
-	fltx4 scLengthInv = ReciprocalSqrtSIMD( scLengthSqr );
-	return AndSIMD( isSignificant, MulSIMD( scLengthInv, scLengthSqr ) );
-}
-
-inline const fltx4 Normalized3SIMD (const fltx4 vec)
-{
-	fltx4 scLengthSqr = Dot3SIMD(vec,vec);
-	bi32x4 isSignificant = CmpGtSIMD(scLengthSqr, Four_Epsilons);
-	fltx4 scLengthInv = ReciprocalSqrtSIMD(scLengthSqr);
-	return AndSIMD(isSignificant, MulSIMD(vec, scLengthInv));
 }
 
 //-----------------------------------------------------------------------------

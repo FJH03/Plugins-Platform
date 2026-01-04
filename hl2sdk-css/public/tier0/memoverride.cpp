@@ -145,6 +145,11 @@ inline void *ReallocUnattributed( void *pMem, size_t nSize )
 #define FREE_CALL
 #endif
 
+// check for noexcept in crt
+#ifndef _CRT_NOEXCEPT
+#define _CRT_NOEXCEPT
+#endif
+
 extern "C"
 {
 	
@@ -180,9 +185,6 @@ extern "C"
 
 // 64-bit
 #ifdef _WIN64
-#if ( defined ( _MSC_VER ) && _MSC_VER >= 1900 )
-	_CRTRESTRICT
-#endif
 void* __cdecl _malloc_base( size_t nSize )
 {
 	return AllocUnattributed( nSize );
@@ -206,27 +208,15 @@ ALLOC_CALL void *_realloc_base( void *pMem, size_t nSize )
 	return ReallocUnattributed( pMem, nSize );
 }
 
-#if ( defined ( _MSC_VER ) && _MSC_VER >= 1920 )
-ALLOC_CALL void* _recalloc_base( void* pMem, size_t nCount, size_t nSize )
+ALLOC_CALL void *_recalloc_base( void *pMem, size_t nCount, size_t nSize )
 {
-	void* pMemOut = ReallocUnattributed( pMem, nSize * nCount );
+	void *pMemOut = ReallocUnattributed( pMem, nCount * nSize );
 	if ( !pMem )
 	{
-		memset( pMemOut, 0, nSize * nCount );
+		memset( pMemOut, 0, nCount * nSize);
 	}
 	return pMemOut;
 }
-#else
-ALLOC_CALL void *_recalloc_base( void *pMem, size_t nSize )
-{
-	void *pMemOut = ReallocUnattributed( pMem, nSize );
-	if ( !pMem )
-	{
-		memset( pMemOut, 0, nSize );
-	}
-	return pMemOut;
-}
-#endif
 
 void _free_base( void *pMem )
 {
@@ -257,11 +247,7 @@ void * __cdecl _realloc_crt(void *ptr, size_t size)
 
 void * __cdecl _recalloc_crt(void *ptr, size_t count, size_t size)
 {
-#if ( defined ( _MSC_VER ) && _MSC_VER >= 1920 )
-	return _recalloc_base( ptr, count, size );
-#else
-	return _recalloc_base( ptr, size * count );
-#endif
+	return _recalloc_base( ptr, size, count );
 }
 
 ALLOC_CALL void * __cdecl _recalloc ( void * memblock, size_t count, size_t size )
@@ -274,11 +260,7 @@ ALLOC_CALL void * __cdecl _recalloc ( void * memblock, size_t count, size_t size
 	return pMem;
 }
 
-#if ( defined ( _MSC_VER ) && _MSC_VER >= 1930 )
-size_t _msize_base( void* pMem ) noexcept
-#else
-size_t _msize_base( void *pMem )
-#endif
+size_t _msize_base( void *pMem ) _CRT_NOEXCEPT
 {
 	return g_pMemAlloc->GetSize(pMem);
 }
@@ -413,7 +395,7 @@ extern "C"
 // ensures they are here even when linking against debug or release static libs
 //-----------------------------------------------------------------------------
 #ifndef NO_MEMOVERRIDE_NEW_DELETE
-#ifdef OSX
+#if defined (OSX) || defined (ANDROID)
 void *__cdecl operator new( size_t nSize ) throw (std::bad_alloc)
 #else
 void *__cdecl operator new( size_t nSize )
@@ -427,7 +409,7 @@ void *__cdecl operator new( size_t nSize, int nBlockUse, const char *pFileName, 
 	return g_pMemAlloc->Alloc(nSize, pFileName, nLine);
 }
 
-#ifdef OSX
+#if defined (OSX) || defined (ANDROID)
 void __cdecl operator delete( void *pMem ) throw()
 #else
 void __cdecl operator delete( void *pMem )
@@ -435,8 +417,7 @@ void __cdecl operator delete( void *pMem )
 {
 	g_pMemAlloc->Free( pMem );
 }
-
-#ifdef OSX
+#if defined (OSX) || defined (ANDROID)
 void operator delete(void*pMem, std::size_t)
 #else
 void operator delete(void*pMem, std::size_t) throw()
@@ -445,7 +426,7 @@ void operator delete(void*pMem, std::size_t) throw()
 	g_pMemAlloc->Free( pMem );
 }
 
-#ifdef OSX
+#if defined (OSX) || defined (ANDROID)
 void *__cdecl operator new[]( size_t nSize ) throw (std::bad_alloc)
 #else
 void *__cdecl operator new[]( size_t nSize )
@@ -459,7 +440,7 @@ void *__cdecl operator new[] ( size_t nSize, int nBlockUse, const char *pFileNam
 	return g_pMemAlloc->Alloc(nSize, pFileName, nLine);
 }
 
-#ifdef OSX
+#if defined (OSX) || defined (ANDROID)
 void __cdecl operator delete[]( void *pMem ) throw()
 #else
 void __cdecl operator delete[]( void *pMem )
@@ -1278,7 +1259,7 @@ wchar_t * __cdecl _wcsdup ( const wchar_t * string )
 // 	XBox Memory Allocator Override
 //-----------------------------------------------------------------------------
 #if defined( _X360 )
-#if defined( USE_MEM_DEBUG )
+#if defined( _DEBUG ) || defined( USE_MEM_DEBUG )
 #include "utlmap.h"
 
 MEMALLOC_DEFINE_EXTERNAL_TRACKING( XMem );

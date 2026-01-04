@@ -42,15 +42,15 @@ inline unsigned int CountTrailingZeros( unsigned int elem )
 
 inline unsigned int CountLeadingZeros(unsigned int x)
 {
-	unsigned long firstBit;
-	if ( _BitScanReverse(&firstBit,x) )
+	uint32 firstBit;
+	if ( _BitScanReverse((unsigned long*)&firstBit,x) )
 		return 31 - firstBit;
 	return 32;
 }
 inline unsigned int CountTrailingZeros(unsigned int elem)
 {
-	unsigned long out;
-	if ( _BitScanForward(&out, elem) )
+	uint32 out;
+	if ( _BitScanForward((unsigned long*)&out, elem) )
 		return out;
 	return 32;
 }
@@ -63,7 +63,7 @@ inline unsigned int CountTrailingZeros(unsigned int elem)
 
 static BitBufErrorHandler g_BitBufErrorHandler = 0;
 
-inline int BitForBitnum(int bitnum)
+inline unsigned int BitForBitnum(int bitnum)
 {
 	return GetBitForBitnum(bitnum);
 }
@@ -110,11 +110,11 @@ public:
 
 		for ( unsigned int maskBit=0; maskBit < 32; maskBit++ )
 			g_ExtraMasks[maskBit] = BitForBitnum(maskBit) - 1;
-		g_ExtraMasks[32] = static_cast<uint32>(~0u);
+		g_ExtraMasks[32] = ~0u;
 
 		for ( unsigned int littleBit=0; littleBit < 32; littleBit++ )
 			StoreLittleDWord( &g_LittleBits[littleBit], 0, 1u<<littleBit );
-	}
+	}                     
 };
 static CBitWriteMasksInit g_BitWriteMasksInit;
 
@@ -187,7 +187,7 @@ void bf_write::SetAssertOnOverflow( bool bAssert )
 }
 
 
-const char* bf_write::GetDebugName() RESTRICT
+const char* bf_write::GetDebugName()
 {
 	return m_pDebugName;
 }
@@ -486,16 +486,16 @@ bool bf_write::WriteBits(const void *pInData, int nBits)
 	if ( IsPC() && nBitsLeft >= 32 )
 	{
 		uint32 iBitsRight = (m_iCurBit & 31);
-		uint32 iBitsLeft = 32 - iBitsRight;
-		uint32 bitMaskLeft = g_BitWriteMasks[iBitsRight][32];
-		uint32 bitMaskRight = g_BitWriteMasks[0][iBitsRight];
+        uint32 iBitsLeft = 32 - iBitsRight;
+        uint32 bitMaskLeft = g_BitWriteMasks[iBitsRight][32];
+        uint32 bitMaskRight = g_BitWriteMasks[0][iBitsRight];
 
-		uint32 *pData = &m_pData[m_iCurBit>>5];
+        uint32 *pData = &m_pData[m_iCurBit>>5];
 
 		// Read dwords.
 		while(nBitsLeft >= 32)
 		{
-			uint32 curData = *(uint32*)pOut;
+            uint32 curData = *(uint32*)pOut;
 			pOut += sizeof(uint32);
 
 			*pData &= bitMaskLeft;
@@ -814,7 +814,7 @@ bf_read::bf_read( const char *pDebugName, const void *pData, int nBytes, int nBi
 void bf_read::StartReading( const void *pData, int nBytes, int iStartBit, int nBits )
 {
 	// Make sure we're dword aligned.
-	Assert(((uintp)pData & 3) == 0);
+	Assert(((size_t)pData & 3) == 0);
 
 	m_pData = (unsigned char*)pData;
 	m_nDataBytes = nBytes;
@@ -885,7 +885,7 @@ void bf_read::ReadBits(void *pOutData, int nBits)
 
 	
 	// align output to dword boundary
-	while( ((uintp)pOut & 3) != 0 && nBitsLeft >= 8 )
+	while( ((size_t)pOut & 3) != 0 && nBitsLeft >= 8 )
 	{
 		*pOut = (unsigned char)ReadUBitLong(8);
 		++pOut;
@@ -938,7 +938,7 @@ int bf_read::ReadBitsClamped_ptr(void *pOutData, size_t outSizeBytes, size_t nBi
 		//	return 0;
 	}
 
-	ReadBits( pOutData, (int)readSizeBits );
+	ReadBits( pOutData, readSizeBits );
 	SeekRelative( skippedBits );
 
 	// Return the number of bits actually read.
@@ -1462,10 +1462,10 @@ int bf_read::CompareBitsAt( int offset, bf_read * RESTRICT other, int otherOffse
 
 	unsigned int iStartBit1 = offset & 31u;
 	unsigned int iStartBit2 = otherOffset & 31u;
-	uint32 *pData1 = (uint32*)m_pData + (offset >> 5);
-	uint32 *pData2 = (uint32*)other->m_pData + (otherOffset >> 5);
-	uint32 *pData1End = pData1 + ((offset + numbits - 1) >> 5);
-	uint32 *pData2End = pData2 + ((otherOffset + numbits - 1) >> 5);
+    uint32 *pData1 = (uint32*)m_pData + (offset >> 5);
+    uint32 *pData2 = (uint32*)other->m_pData + (otherOffset >> 5);
+    uint32 *pData1End = pData1 + ((offset + numbits - 1) >> 5);
+    uint32 *pData2End = pData2 + ((otherOffset + numbits - 1) >> 5);
 
 	while ( numbits > 32 )
 	{

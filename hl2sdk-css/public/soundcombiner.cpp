@@ -276,12 +276,12 @@ bool CSoundCombiner::VerifyFilesExist( IFileSystem *pFilesystem, CUtlVector< Com
 class StdIOReadBinary : public IFileReadBinary
 {
 public:
-	FileHandle_t open( const char *pFileName )
+	int open( const char *pFileName )
 	{
-		return filesystem->Open( pFileName, "rb" );
+		return (int)filesystem->Open( pFileName, "rb" );
 	}
 
-	int read( void *pOutput, int size, FileHandle_t file )
+	int read( void *pOutput, int size, int file )
 	{
 		if ( !file )
 			return 0;
@@ -289,15 +289,15 @@ public:
 		return filesystem->Read( pOutput, size, (FileHandle_t)file );
 	}
 
-	void seek( FileHandle_t file, int pos )
+	void seek( int file, int pos )
 	{
 		if ( !file )
 			return;
 
-		filesystem->Seek( file, pos, FILESYSTEM_SEEK_HEAD );
+		filesystem->Seek( (FileHandle_t)file, pos, FILESYSTEM_SEEK_HEAD );
 	}
 
-	unsigned int tell( FileHandle_t file )
+	unsigned int tell( int file )
 	{
 		if ( !file )
 			return 0;
@@ -305,7 +305,7 @@ public:
 		return filesystem->Tell( (FileHandle_t)file );
 	}
 
-	unsigned int size( FileHandle_t file )
+	unsigned int size( int file )
 	{
 		if ( !file )
 			return 0;
@@ -313,7 +313,7 @@ public:
 		return filesystem->Size( (FileHandle_t)file );
 	}
 
-	void close( FileHandle_t file )
+	void close( int file )
 	{
 		if ( !file )
 			return;
@@ -325,29 +325,29 @@ public:
 class StdIOWriteBinary : public IFileWriteBinary
 {
 public:
-	FileHandle_t create( const char *pFileName )
+	int create( const char *pFileName )
 	{
-		return filesystem->Open( pFileName, "wb" );
+		return (int)filesystem->Open( pFileName, "wb" );
 	}
 
-	int write( void *pData, int size, FileHandle_t file )
+	int write( void *pData, int size, int file )
 	{
-		return filesystem->Write( pData, size, file );
+		return filesystem->Write( pData, size, (FileHandle_t)file );
 	}
 
-	void close( FileHandle_t file )
+	void close( int file )
 	{
-		filesystem->Close( file );
+		filesystem->Close( (FileHandle_t)file );
 	}
 
-	void seek( FileHandle_t file, int pos )
+	void seek( int file, int pos )
 	{
-		filesystem->Seek( file, pos, FILESYSTEM_SEEK_HEAD );
+		filesystem->Seek( (FileHandle_t)file, pos, FILESYSTEM_SEEK_HEAD );
 	}
 
-	unsigned int tell( FileHandle_t file )
+	unsigned int tell( int file )
 	{
-		return filesystem->Tell( file );
+		return filesystem->Tell( (FileHandle_t)file );
 	}
 };
 

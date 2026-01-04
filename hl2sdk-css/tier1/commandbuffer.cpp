@@ -37,6 +37,7 @@ CCommandBuffer::CCommandBuffer( ) : m_Commands( 32, 32 )
 	m_nArgSBufferSize = 0;
 	m_bIsProcessingCommands = false;
 	m_nMaxArgSBufferLength = ARGS_BUFFER_LENGTH;
+	m_bWaitEnabled = true;
 }
 
 CCommandBuffer::~CCommandBuffer()
@@ -92,7 +93,7 @@ bool CCommandBuffer::ParseArgV0( CUtlBuffer &buf, char *pArgV0, int nMaxLen, con
 //-----------------------------------------------------------------------------
 // Insert a command into the command queue
 //-----------------------------------------------------------------------------
-void CCommandBuffer::InsertCommandAtAppropriateTime( intp hCommand )
+void CCommandBuffer::InsertCommandAtAppropriateTime( CommandHandle_t hCommand )
 {
 	intp i;
 	Command_t &command = m_Commands[hCommand];
@@ -108,7 +109,7 @@ void CCommandBuffer::InsertCommandAtAppropriateTime( intp hCommand )
 //-----------------------------------------------------------------------------
 // Insert a command into the command queue at the appropriate time
 //-----------------------------------------------------------------------------
-void CCommandBuffer::InsertImmediateCommand( intp hCommand )
+void CCommandBuffer::InsertImmediateCommand( CommandHandle_t hCommand )
 {
 	m_Commands.LinkBefore( m_hNextCommand, hCommand );
 }
@@ -395,10 +396,8 @@ void CCommandBuffer::EndProcessingCommands()
 			break;
 
 		AssertMsgOnce( false, "CCommandBuffer::EndProcessingCommands() called before all appropriate commands were dequeued.\n" );
-		int nNext = i;
 		Msg( "Warning: Skipping command %s\n", &m_pArgSBuffer[ m_Commands[i].m_nFirstArgS ] );
 		m_Commands.Remove( i );
-		i = nNext;
 	}
 
 	Compact();

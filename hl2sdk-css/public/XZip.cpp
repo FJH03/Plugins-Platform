@@ -109,7 +109,6 @@
 #endif
 
 #include <time.h>
-#define I_SHOULD_NOT_BE_USING_XZIP
 #include "zip/XZip.h"
 
 #ifdef __clang__
@@ -126,7 +125,7 @@
 static ZRESULT lasterrorZ=ZR_OK;
 #else
 #include "tier0/threadtools.h"
-static CThreadLocalInt<ZRESULT> lasterrorZ;
+static CTHREADLOCALINTEGER(ZRESULT) lasterrorZ;
 #endif
 
 typedef unsigned char uch;      // unsigned 8-bit value

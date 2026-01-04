@@ -420,13 +420,6 @@ void MatrixGetColumn( const matrix3x4_t& in, int column, Vector &out )
 	out.z = in[2][column];
 }
 
-void MatrixSetColumn( const Vector &in, int column, matrix3x4_t& out )
-{
-	out[0][column] = in.x;
-	out[1][column] = in.y;
-	out[2][column] = in.z;
-}
-
 void MatrixScaleBy ( const float flScale, matrix3x4_t &out )
 {
 	out[0][0] *= flScale;
@@ -475,14 +468,6 @@ void CrossProduct (const float* v1, const float* v2, float* cross)
 	cross[0] = v1[1]*v2[2] - v1[2]*v2[1];
 	cross[1] = v1[2]*v2[0] - v1[0]*v2[2];
 	cross[2] = v1[0]*v2[1] - v1[1]*v2[0];
-}
-
-int Q_log2(int val)
-{
-	int answer=0;
-	while (val>>=1)
-		answer++;
-	return answer;
 }
 
 // Matrix is right-handed x=forward, y=left, z=up.  We a left-handed convention for vectors in the game code (forward, right, up)
@@ -1092,57 +1077,6 @@ void SetScaleMatrix( float x, float y, float z, matrix3x4_t &dst )
 	dst[2][0] = 0.0f;	dst[2][1] = 0.0f;	dst[2][2] = z;		dst[2][3] = 0.0f;
 }
 
-
-//-----------------------------------------------------------------------------
-// Purpose: Builds the matrix for a counterclockwise rotation about an arbitrary axis.
-//
-//		   | ax2 + (1 - ax2)cosQ		axay(1 - cosQ) - azsinQ		azax(1 - cosQ) + aysinQ |
-// Ra(Q) = | axay(1 - cosQ) + azsinQ	ay2 + (1 - ay2)cosQ			ayaz(1 - cosQ) - axsinQ |
-//		   | azax(1 - cosQ) - aysinQ	ayaz(1 - cosQ) + axsinQ		az2 + (1 - az2)cosQ     |
-//          
-// Input  : mat - 
-//			vAxisOrRot - 
-//			angle - 
-//-----------------------------------------------------------------------------
-void MatrixBuildRotationAboutAxis( const Vector &vAxisOfRot, float angleDegrees, matrix3x4_t &dst )
-{
-	float radians;
-	float axisXSquared;
-	float axisYSquared;
-	float axisZSquared;
-	float fSin;
-	float fCos;
-
-	radians = angleDegrees * ( M_PI / 180.0 );
-	fSin = sin( radians );
-	fCos = cos( radians );
-
-	axisXSquared = vAxisOfRot[0] * vAxisOfRot[0];
-	axisYSquared = vAxisOfRot[1] * vAxisOfRot[1];
-	axisZSquared = vAxisOfRot[2] * vAxisOfRot[2];
-
-	// Column 0:
-	dst[0][0] = axisXSquared + (1 - axisXSquared) * fCos;
-	dst[1][0] = vAxisOfRot[0] * vAxisOfRot[1] * (1 - fCos) + vAxisOfRot[2] * fSin;
-	dst[2][0] = vAxisOfRot[2] * vAxisOfRot[0] * (1 - fCos) - vAxisOfRot[1] * fSin;
-
-	// Column 1:
-	dst[0][1] = vAxisOfRot[0] * vAxisOfRot[1] * (1 - fCos) - vAxisOfRot[2] * fSin;
-	dst[1][1] = axisYSquared + (1 - axisYSquared) * fCos;
-	dst[2][1] = vAxisOfRot[1] * vAxisOfRot[2] * (1 - fCos) + vAxisOfRot[0] * fSin;
-
-	// Column 2:
-	dst[0][2] = vAxisOfRot[2] * vAxisOfRot[0] * (1 - fCos) + vAxisOfRot[1] * fSin;
-	dst[1][2] = vAxisOfRot[1] * vAxisOfRot[2] * (1 - fCos) - vAxisOfRot[0] * fSin;
-	dst[2][2] = axisZSquared + (1 - axisZSquared) * fCos;
-
-	// Column 3:
-	dst[0][3] = 0;
-	dst[1][3] = 0;
-	dst[2][3] = 0;
-}
-
-
 //-----------------------------------------------------------------------------
 // Computes the transpose
 //-----------------------------------------------------------------------------
@@ -1341,13 +1275,13 @@ bool SolveQuadratic( float a, float b, float c, float &root1, float &root2 )
 	return true;
 }
 
+constexpr float epsilon = 1e-6f;
 // solves for "a, b, c" where "a x^2 + b x + c = y", return true if solution exists
 bool SolveInverseQuadratic( float x1, float y1, float x2, float y2, float x3, float y3, float &a, float &b, float &c )
 {
 	float det = (x1 - x2)*(x1 - x3)*(x2 - x3);
 
-	// FIXME: check with some sort of epsilon
-	if (det == 0.0)
+	if (fabs(det) < epsilon)
 		return false;
 
 	a = (x3*(-y1 + y2) + x2*(y1 - y3) + x1*(-y2 + y3)) / det;
@@ -1415,8 +1349,7 @@ bool SolveInverseReciprocalQuadratic( float x1, float y1, float x2, float y2, fl
 {
 	float det = (x1 - x2)*(x1 - x3)*(x2 - x3)*y1*y2*y3;
 
-	// FIXME: check with some sort of epsilon
-	if (det == 0.0)
+	if (fabs(det) < epsilon)
 		return false;
 
 	a = (x1*y1*(y2 - y3) + x3*(y1 - y2)*y3 + x2*y2*(-y1 + y3)) / det;
@@ -1449,33 +1382,6 @@ void VectorYawRotate( const Vector &in, float flYaw, Vector &out)
 	out.y = in.x * sy + in.y * cy;
 	out.z = in.z;
 }
-
-
-
-float Bias( float x, float biasAmt )
-{
-	// WARNING: not thread safe
-	static float lastAmt = -1;
-	static float lastExponent = 0;
-	if( lastAmt != biasAmt )
-	{
-		lastExponent = log( biasAmt ) * -1.4427f; // (-1.4427 = 1 / log(0.5))
-	}
-	float fRet = pow( x, lastExponent );
-	Assert ( !IS_NAN( fRet ) );
-	return fRet;
-}
-
-
-float Gain( float x, float biasAmt )
-{
-	// WARNING: not thread safe
-	if( x < 0.5 )
-		return 0.5f * Bias( 2*x, 1-biasAmt );
-	else
-		return 1 - 0.5f * Bias( 2 - 2*x, 1-biasAmt );
-}
-
 
 float SmoothCurve( float x )
 {
@@ -1952,24 +1858,21 @@ void QuaternionAngles( const Quaternion &q, QAngle &angles )
 	VPROF_BUDGET( "QuaternionAngles", "Mathlib" );
 #endif
 
-#if 1
+#if 0
 	// FIXME: doing it this way calculates too much data, needs to do an optimized version...
 	matrix3x4_t matrix;
 	QuaternionMatrix( q, matrix );
 	MatrixAngles( matrix, angles );
 #else
-	float m11, m12, m13, m23, m33;
+	float m11 = ( 2.0f * q.w * q.w ) + ( 2.0f * q.x * q.x ) - 1.0f;
+	float m12 = ( 2.0f * q.x * q.y ) + ( 2.0f * q.w * q.z );
+	float m13 = ( 2.0f * q.x * q.z ) - ( 2.0f * q.w * q.y );
+	float m23 = ( 2.0f * q.y * q.z ) + ( 2.0f * q.w * q.x );
+	float m33 = ( 2.0f * q.w * q.w ) + ( 2.0f * q.z * q.z ) - 1.0f;
 
-	m11 = ( 2.0f * q.w * q.w ) + ( 2.0f * q.x * q.x ) - 1.0f;
-	m12 = ( 2.0f * q.x * q.y ) + ( 2.0f * q.w * q.z );
-	m13 = ( 2.0f * q.x * q.z ) - ( 2.0f * q.w * q.y );
-	m23 = ( 2.0f * q.y * q.z ) + ( 2.0f * q.w * q.x );
-	m33 = ( 2.0f * q.w * q.w ) + ( 2.0f * q.z * q.z ) - 1.0f;
-
-	// FIXME: this code has a singularity near PITCH +-90
-	angles[YAW] = RAD2DEG( atan2(m12, m11) );
-	angles[PITCH] = RAD2DEG( asin(-m13) );
-	angles[ROLL] = RAD2DEG( atan2(m23, m33) );
+	angles[YAW] = RAD2DEG( atan2f(m12, m11) );
+	angles[PITCH] = RAD2DEG( asinf(clamp(-m13, -1.0f, 1.0f)) );
+	angles[ROLL] = RAD2DEG( atan2f(m23, m33) );
 #endif
 
 	Assert( angles.IsValid() );
@@ -2193,10 +2096,22 @@ void QuaternionAngles( const Quaternion &q, RadianEuler &angles )
 	Assert( s_bMathlibInitialized );
 	Assert( q.IsValid() );
 
+#if 0
 	// FIXME: doing it this way calculates too much data, needs to do an optimized version...
 	matrix3x4_t matrix;
 	QuaternionMatrix( q, matrix );
 	MatrixAngles( matrix, angles );
+#else
+	angles.x = atan2f(2.0f * (q.w * q.x + q.y * q.z), 
+						1.0f - 2.0f * (q.x * q.x + q.y * q.y));
+	float sinp = 2.0f * (q.w * q.y - q.z * q.x);
+	if (fabs(sinp) >= 1.0f)
+		angles.y = copysignf(M_PI / 2.0f, sinp);
+	else
+		angles.y = asinf(sinp);
+	angles.z = atan2f(2.0f * (q.w * q.z + q.x * q.y), 
+						1.0f - 2.0f * (q.y * q.y + q.z * q.z));
+#endif
 
 	Assert( angles.IsValid() );
 }
@@ -2500,7 +2415,7 @@ float Hermite_Spline(
 }
 
 
-void Hermite_SplineBasis( float t, float basis[] )
+void Hermite_SplineBasis( float t, float basis[4] )
 {
 	float tSqr = t*t;
 	float tCube = t*tSqr;
@@ -2676,7 +2591,7 @@ void Cubic_Spline(
 
 	output.Init();
 
-	Vector b, c;
+	Vector a, b, c, d;
 
 	// matrix row 1
 	VectorScale( p2, tSqrSqr * 2, b );
@@ -2811,7 +2726,7 @@ void Parabolic_Spline(
 
 	output.Init();
 
-	Vector a, b, c;
+	Vector a, b, c, d;
 
 	// matrix row 1
 	// no influence from t cubed
@@ -3343,7 +3258,7 @@ void MathLib_Init( float gamma, float texGamma, float brightness, int overbright
 
 	// SSE Generally performs better than 3DNow when present, so this is placed 
 	// first to allow SSE to override these settings.
-#if !defined( OSX ) && !defined( PLATFORM_WINDOWS_PC64 ) && !defined(LINUX)
+#if !defined( OSX ) && !defined( PLATFORM_WINDOWS_PC64 ) && !defined(LINUX) && !defined(PLATFORM_BSD)
 	if ( bAllow3DNow && pi.m_b3DNow )
 	{
 		s_b3DNowEnabled = true;
@@ -3864,26 +3779,6 @@ int ClipPolyToPlane_Precise( double *inVerts, int vertCount, double *outVerts, c
 	}
 
 	return outCount;
-}
-
-int CeilPow2( int in )
-{
-	int retval;
-	
-	retval = 1;
-	while( retval < in )
-		retval <<= 1;
-	return retval;
-}
-
-int FloorPow2( int in )
-{
-	int retval;
-	
-	retval = 1;
-	while( retval < in )
-		retval <<= 1;
-	return retval >> 1;
 }
 
 

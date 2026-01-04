@@ -47,7 +47,6 @@
 #include <stdarg.h>
 
 #ifdef POSIX
-#include <iconv.h>
 #include <ctype.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -80,14 +79,12 @@
 #endif
 #include "tier0/memdbgon.h"
 
-FORCEINLINE char TOLOWERC( char x )
-{
-	return ( x >= 'A' && x <= 'Z' ) ? (char)( x + 32 ) : x;
-}
-FORCEINLINE char TOUPPERC( char x )
-{
-	return ( x >= 'a' && x <= 'z' ) ? (char)( x - 32 ) : x;
-}
+#ifdef ANDROID
+#include "common/android/iconv.h"
+#elif POSIX
+#include <iconv.h>
+#endif
+
 static int FastToLower( char c )
 {
 	int i = (unsigned char) c;
@@ -141,7 +138,7 @@ int _V_memcmp (const char* file, int line, const void *m1, const void *m2, int c
 int	_V_strlen(const char* file, int line, const char *str)
 {
 	AssertValidStringPtr(str);
-	return (int)strlen( str );
+	return strlen( str );
 }
 
 void _V_strcpy (const char* file, int line, char *dest, const char *src)
@@ -154,7 +151,7 @@ void _V_strcpy (const char* file, int line, char *dest, const char *src)
 
 int	_V_wcslen(const char* file, int line, const wchar_t *pwch)
 {
-	return (int)wcslen( pwch );
+	return wcslen( pwch );
 }
 
 char *_V_strrchr(const char* file, int line, const char *s, char c)
@@ -227,39 +224,6 @@ char *V_strupr( char *start )
 			*str -= 'a' - 'A';
 		else if ( (unsigned char)*str >= 0x80 ) // non-ascii, fall back to CRT
 			*str = toupper( *str );
-		str++;
-	}
-	return start;
-}
-
-char *V_strtitlecase( char *start )
-{
-	bool bSeparator = true;
-	unsigned char *str = (unsigned char*)start;
-	while( *str )
-	{
-		if ( V_isspace( *str ) )
-		{
-			bSeparator = true;
-		}
-		else if ( bSeparator )
-		{
-			// Upcase
-			if ( (unsigned char)(*str - 'a') <= ('z' - 'a') )
-				*str -= 'a' - 'A';
-			else if ( (unsigned char)*str >= 0x80 ) // non-ascii, fall back to CRT
-				*str = toupper( *str );
-
-			bSeparator = false;
-		}
-		else
-		{
-			// Downcase
-			if ( (unsigned char)(*str - 'A') <= ('Z' - 'A') )
-				*str += 'a' - 'A';
-			else if ( (unsigned char)*str >= 0x80 ) // non-ascii, fall back to CRT
-				*str = tolower( *str );
-		}
 		str++;
 	}
 	return start;
@@ -380,69 +344,6 @@ int V_strncmp( const char *s1, const char *s2, int count )
 }
 
 
-int V_stricmp_fast( const char *s1, const char *s2 )
-{
-	// This routine has historically allowed nullptr
-	// but that's a bit ill-defined as it may mean
-	// the calling code has a bug.  Make calls with
-	// nullptr visible for fixing.
-	Assert( s1 != nullptr && s2 != nullptr );
-	
-	// A string is always equal to itself. This optimization is
-	// surprisingly valuable.
-	if ( s1 == s2 )
-		return 0;
-
-	if ( s1 == nullptr )
-		return -1;
-	if ( s2 == nullptr )
-		return 1;
-
-	uint8 const *pS1 = ( uint8 const * ) s1;
-	uint8 const *pS2 = ( uint8 const * ) s2;
-	for(;;)
-	{
-		signed char c1 = *( pS1++ );
-		signed char c2 = *( pS2++ );
-		if ( c1 == c2 )
-		{
-			if ( !c1 ) return 0;
-		}
-		else
-		{
-			if ( ! c2 )
-			{
-				return c1 - c2;
-			}
-			c1 = TOLOWERC( c1 );
-			c2 = TOLOWERC( c2 );
-			if ( c1 != c2 )
-			{
-				return c1 - c2;
-			}
-		}
-		c1 = *( pS1++ );
-		c2 = *( pS2++ );
-		if ( c1 == c2 )
-		{
-			if ( !c1 ) return 0;
-		}
-		else
-		{
-			if ( ! c2 )
-			{
-				return c1 - c2;
-			}
-			c1 = TOLOWERC( c1 );
-			c2 = TOLOWERC( c2 );
-			if ( c1 != c2 )
-			{
-				return c1 - c2;
-			}
-		}
-	}
-}
-
 const char *StringAfterPrefix( const char *str, const char *prefix )
 {
 	AssertValidStringPtr( str );
@@ -455,10 +356,6 @@ const char *StringAfterPrefix( const char *str, const char *prefix )
 	while ( FastToLower( *str++ ) == FastToLower( *prefix++ ) );
 	return NULL;
 }
-
-//-----------------------------------------------------------------------------
-// Finds a string in another string with a case insensitive test
-//-----------------------------------------------------------------------------
 
 const char *StringAfterPrefixCaseSensitive( const char *str, const char *prefix )
 {
@@ -734,29 +631,30 @@ void V_normalizeFloatString( char* pFloat )
 //-----------------------------------------------------------------------------
 char const* V_stristr( char const* pStr, char const* pSearch )
 {
-	Assert( pStr );
-	Assert( pSearch );
+	AssertValidStringPtr(pStr);
+	AssertValidStringPtr(pSearch);
+
 	if (!pStr || !pSearch) 
 		return 0;
 
-	const char* pLetter = pStr;
+	char const* pLetter = pStr;
 
 	// Check the entire string
 	while (*pLetter != 0)
 	{
 		// Skip over non-matches
-		if ( FastASCIIToLower( *pLetter ) == FastASCIIToLower( *pSearch) )
+		if (FastToLower((unsigned char)*pLetter) == FastToLower((unsigned char)*pSearch))
 		{
 			// Check for match
-			const char* pMatch = pLetter + 1;
-			const char* pTest = pSearch + 1;
+			char const* pMatch = pLetter + 1;
+			char const* pTest = pSearch + 1;
 			while (*pTest != 0)
 			{
 				// We've run off the end; don't bother.
 				if (*pMatch == 0)
 					return 0;
 
-				if ( FastASCIIToLower( *pMatch) != FastASCIIToLower( *pTest ) )
+				if (FastToLower((unsigned char)*pMatch) != FastToLower((unsigned char)*pTest))
 					break;
 
 				++pMatch;
@@ -764,7 +662,7 @@ char const* V_stristr( char const* pStr, char const* pSearch )
 			}
 
 			// Found a match!
-			if ( *pTest == 0 )
+			if (*pTest == 0)
 				return pLetter;
 		}
 
@@ -1528,7 +1426,7 @@ int _V_UCS2ToUnicode( const ucs2 *pUCS2, wchar_t *pUnicode, int cubDestSizeInByt
 	size_t nMaxUTF8 = cubDestSizeInBytes;
 	char *pIn = (char *)pUCS2;
 	char *pOut = (char *)pUnicode;
-	if ( conv_t != (iconv_t)-1 )
+	if ( conv_t > (void*)0 )
 	{
 		cchResult = iconv( conv_t, &pIn, &nLenUnicde, &pOut, &nMaxUTF8 );
 		iconv_close( conv_t );
@@ -1556,7 +1454,7 @@ int _V_UnicodeToUCS2( const wchar_t *pUnicode, int cubSrcInBytes, char *pUCS2, i
 #ifdef _WIN32
 	// Figure out which buffer is smaller and convert from bytes to character
 	// counts.
-	int cchResult = min( cubSrcInBytes/ ((int)sizeof(wchar_t)), cubDestSizeInBytes/((int)sizeof(wchar_t)) );
+	int cchResult = min( (size_t)cubSrcInBytes/sizeof(wchar_t), cubDestSizeInBytes/sizeof(wchar_t) );
 	wchar_t *pDest = (wchar_t*)pUCS2;
 	wcsncpy( pDest, pUnicode, cchResult );
 	// Make sure we NULL-terminate.
@@ -1568,7 +1466,7 @@ int _V_UnicodeToUCS2( const wchar_t *pUnicode, int cubSrcInBytes, char *pUCS2, i
 	size_t nMaxUCS2 = cubDestSizeInBytes;
 	char *pIn = (char*)pUnicode;
 	char *pOut = pUCS2;
-	if ( conv_t != (iconv_t)-1 )
+	if ( conv_t > (void*)0 )
 	{
 		cchResult = iconv( conv_t, &pIn, &nLenUnicde, &pOut, &nMaxUCS2 );
 		iconv_close( conv_t );
@@ -1616,7 +1514,7 @@ int _V_UCS2ToUTF8( const ucs2 *pUCS2, char *pUTF8, int cubDestSizeInBytes )
 	size_t nMaxUTF8 = cubDestSizeInBytes - 1;
 	char *pIn = (char *)pUCS2;
 	char *pOut = (char *)pUTF8;
-	if ( conv_t != (iconv_t)-1 )
+	if ( conv_t > (void*)0 )
 	{
 		const size_t nBytesToWrite = nMaxUTF8;
 		cchResult = iconv( conv_t, &pIn, &nLenUnicde, &pOut, &nMaxUTF8 );
@@ -1661,7 +1559,7 @@ int _V_UTF8ToUCS2( const char *pUTF8, int cubSrcInBytes, ucs2 *pUCS2, int cubDes
 	size_t nMaxUTF8 = cubDestSizeInBytes;
 	char *pIn = (char *)pUTF8;
 	char *pOut = (char *)pUCS2;
-	if ( conv_t != (iconv_t)-1 )
+	if ( conv_t > (void*)0 )
 	{
 		cchResult = iconv( conv_t, &pIn, &nLenUnicde, &pOut, &nMaxUTF8 );
 		iconv_close( conv_t );
@@ -1769,77 +1667,6 @@ bool PATHSEPARATOR( char c )
 	return c == '\\' || c == '/';
 }
 
-
-
-// A special high-performance case-insensitive compare function
-// returns 0 if strings match exactly
-// returns >0 if strings match in a case-insensitive way, but do not match exactly
-// returns <0 if strings do not match even in a case-insensitive way
-int	_V_stricmp_NegativeForUnequal( const char *s1, const char *s2 )
-{
-	//VPROF_2( "V_stricmp", VPROF_BUDGETGROUP_OTHER_UNACCOUNTED, false, BUDGETFLAG_ALL );
-
-	// It is not uncommon to compare a string to itself. Since stricmp
-	// is expensive and pointer comparison is cheap, this simple test
-	// can save a lot of cycles, and cache pollution.
-	if ( s1 == s2 )
-		return 0;
-
-	uint8 const *pS1 = ( uint8 const * ) s1;
-	uint8 const *pS2 = ( uint8 const * ) s2;
-	int iExactMatchResult = 1;
-	for(;;)
-	{
-		int c1 = *( pS1++ );
-		int c2 = *( pS2++ );
-		if ( c1 == c2 )
-		{
-			// strings are case-insensitive equal, coerce accumulated
-			// case-difference to 0/1 and return it
-			if ( !c1 ) return !iExactMatchResult;
-		}
-		else
-		{
-			if ( ! c2 )
-			{
-				// c2=0 and != c1  =>  not equal
-				return -1;
-			}
-			iExactMatchResult = 0;
-			c1 = FastASCIIToLower( c1 );
-			c2 = FastASCIIToLower( c2 );
-			if ( c1 != c2 )
-			{
-				// strings are not equal
-				return -1;
-			}
-		}
-		c1 = *( pS1++ );
-		c2 = *( pS2++ );
-		if ( c1 == c2 )
-		{
-			// strings are case-insensitive equal, coerce accumulated
-			// case-difference to 0/1 and return it
-			if ( !c1 ) return !iExactMatchResult;
-		}
-		else
-		{
-			if ( ! c2 )
-			{
-				// c2=0 and != c1  =>  not equal
-				return -1;
-			}
-			iExactMatchResult = 0;
-			c1 = FastASCIIToLower( c1 );
-			c2 = FastASCIIToLower( c2 );
-			if ( c1 != c2 )
-			{
-				// strings are not equal
-				return -1;
-			}
-		}
-	}
-}
 
 //-----------------------------------------------------------------------------
 // Purpose: Extracts the base name of a file (no path, no extension, assumes '/' or '\' as path separator)
@@ -2192,6 +2019,9 @@ bool V_StripLastDir( char *dirName, int maxlen )
 //-----------------------------------------------------------------------------
 const char * V_UnqualifiedFileName( const char * in )
 {
+	if( !in || !in[0] )
+		return in;
+
 	// back up until the character after the first path separator we find,
 	// or the beginning of the string
 	const char * out = in + strlen( in ) - 1;
@@ -2277,12 +2107,7 @@ const char * V_GetFileExtension( const char * path )
 {
 	const char    *src;
 
-	const size_t len = strlen(path);
-	if (len < 1)
-		{ return NULL; }
-
-	src = path + len - 1;
-
+	src = path + strlen(path) - 1;
 
 //
 // back up until a . or the start
@@ -2314,139 +2139,82 @@ const char * V_GetFileName( const char * path )
 
 bool V_RemoveDotSlashes( char *pFilename, char separator, bool bRemoveDoubleSlashes /* = true */ )
 {
-	// McJohn - 2021 - I've hand integrated steam's version of this function. 
-	// make all slashes the requested separator
-	V_FixSlashes( pFilename, separator );
-
-	int len = (int) strlen( pFilename );
-
-	// Fix the double slashes for real.
-	int i = 1; // We start at character 1 to skip over intentional UNC paths. Maybe this is never desirable.
-	while ( i <= ( len - 2 ) )
-	{
-		bool bDoubleSlash = pFilename[ i ] == separator
-			&& pFilename[ i + 1 ] == separator;
-		if ( bDoubleSlash )
-		{
-			memmove( pFilename + i, pFilename + i + 1, len - i );
-			len -= 1;
-			continue;
-		}
-
-		++i;
-	}
-
-	// strip all "/./" and replace by "/"
-	i = 0;
-	while ( i <= ( len - 3 ) )
-	{
-		if ( pFilename[ i ] == separator && pFilename[ i + 1 ] == '.' && pFilename[ i + 2 ] == separator )
-		{
-			memmove( pFilename + i, pFilename + i + 2, len - i - 1 );
-			len -= 2; // stripped /. leaving the /
-		}
-		else
-		{
-			i++;
-		}
-	}
-
-	// Replace ./ with / except for if it's the very first character, in which case we remove both (ie:
-	//   ./foo -> foo
-	//   k./foo -> k/foo
-	//   foo./ -> foo/
-	//   ../foo -> ../foo
-	i = 0;
-	while ( i <= ( len - 2 ) )
-	{
-		if ( i == 0 )
-		{
-			// ./foo -> foo
-			if ( pFilename[ i ] == '.' && pFilename[ i + 1 ] == separator )
-			{
-				memmove( pFilename, pFilename + 2, len - 1 );
-				len -= 2;
-				continue;
-			}
-		}
-		else
-		{
-			bool bIsUselessDotSlash = pFilename[ i - 1 ] != '.'
-				&& pFilename[ i ] == '.'
-				&& pFilename[ i + 1 ] == separator;
-
-			if ( bIsUselessDotSlash )
-			{
-				memmove( pFilename + i, pFilename + i + 1, len - i );
-				len -= 1; // stripped ./ leaving the /	
-			}
-		}
-
-		// Advance the read location.
-		++i;
-	}
-
-
-	// Get rid of a trailing "/." (needless). 
-	// McJohn - Divergence from Steam here: We do not leave the trailing /, because that would change
-	// the expectations of the calling code (previously they had a path that looked like /bar/foo/., 
-	// and if they wanted to concat to that path they would need to add a / first--but if we 
-	// leave behind the / then they don't need that anymore). 
-	if ( len > 2 && pFilename[ len - 1 ] == '.' && separator == pFilename[ len - 2 ] )
-	{
-		pFilename[ len - 2 ] = 0;
-		len -= 2;
-	}
-
-
-	// get rid of leading "./"
-	if ( len > 1 && pFilename[ 0 ] == '.' && pFilename[ 1 ] == separator )
-	{
-		memmove( pFilename, pFilename + 2, len - 1 );
-		len -= 2;
-	}
-
-	// Each time we encounter a "..", back up until we've read the previous directory name,
-	// then get rid of it.
 	char *pIn = pFilename;
+	char *pOut = pFilename;
+	bool bRetVal = true;
+
+	bool bBoundary = true;
 	while ( *pIn )
 	{
-		if ( pIn[ 0 ] == '.' &&
-			pIn[ 1 ] == '.' &&
-			( pIn == pFilename || separator == pIn[ -1 ] ) &&	// Preceding character must be a slash.
-			( pIn[ 2 ] == 0 || separator == pIn[ 2 ] ) )			// Following character must be a slash or the end of the string.
+		if ( bBoundary && pIn[0] == '.' && pIn[1] == '.' && ( PATHSEPARATOR( pIn[2] ) || !pIn[2] ) )
 		{
-			// If there is no previous directory we cannot go up
-			if ( pIn == pFilename || pIn - 1 == pFilename )
-				return false;
+			// Get rid of /../ or trailing /.. by backing pOut up to previous separator
 
-			char *pEndOfDots = pIn + 2;
-			char *pStart = pIn - 2;
-
-			// Ok, now scan back for the path separator that starts the preceding directory.
-			while ( pStart > pFilename && separator != *pStart )
+			// Eat the last separator (or repeated separators) we wrote out
+			while ( pOut != pFilename && pOut[-1] == separator )
 			{
-				--pStart;
+				--pOut;
 			}
 
-			// If we hit the beginning of the path, then without this adjustment we will turn a 
-			// relative path into an absolute path--but that is not correct.
-			if ( pStart == pFilename && *pEndOfDots )
-				pEndOfDots += 1;
+			while ( true )
+			{
+				if ( pOut == pFilename )
+				{
+					bRetVal = false; // backwards compat. return value, even though we continue handling
+					break;
+				}
+				--pOut;
+				if ( *pOut == separator )
+				{
+					break;
+				}
+			}
 
-			// Now slide the string down to get rid of the previous directory and the ".."
-			memmove( pStart, pEndOfDots, strlen( pEndOfDots ) + 1 );
-
-			// Start over.
-			pIn = pFilename;
+			// Skip the '..' but not the slash, next loop iteration will handle separator
+			pIn += 2;
+			bBoundary = ( pOut == pFilename );
+		}
+		else if ( bBoundary && pIn[0] == '.' && ( PATHSEPARATOR( pIn[1] ) || !pIn[1] ) )
+		{
+			// Handle "./" by simply skipping this sequence. bBoundary is unchanged.
+			if ( PATHSEPARATOR( pIn[1] ) )
+			{
+				pIn += 2;
+			}
+			else
+			{
+				// Special case: if trailing "." is preceded by separator, eg "path/.",
+				// then the final separator should also be stripped. bBoundary may then
+				// be in an incorrect state, but we are at the end of processing anyway
+				// so we don't really care (the processing loop is about to terminate).
+				if ( pOut != pFilename && pOut[-1] == separator )
+				{
+					--pOut;
+				}
+				pIn += 1;
+			}
+		}
+		else if ( PATHSEPARATOR( pIn[0] ) )
+		{
+			*pOut = separator;
+			pOut += 1 - (bBoundary & bRemoveDoubleSlashes & (pOut != pFilename));
+			pIn += 1;
+			bBoundary = true;
 		}
 		else
 		{
-			++pIn;
+			if ( pOut != pIn )
+			{
+				*pOut = *pIn;
+			}
+			pOut += 1;
+			pIn += 1;
+			bBoundary = false;
 		}
 	}
+	*pOut = 0;
 
-	return true;
+	return bRetVal;
 }
 
 
@@ -2626,7 +2394,7 @@ static bool CopyToMaxChars( char *pOut, int outSize, const char *pIn, int nChars
 //-----------------------------------------------------------------------------
 // Fixes up a file name, removing dot slashes, fixing slashes, converting to lowercase, etc.
 //-----------------------------------------------------------------------------
-void V_FixupPathName( char *pOut, int nOutLen, const char *pPath )
+void V_FixupPathName( char *pOut, size_t nOutLen, const char *pPath )
 {
 	V_strncpy( pOut, pPath, nOutLen );
 	V_RemoveDotSlashes( pOut, CORRECT_PATH_SEPARATOR, true );
@@ -2647,8 +2415,8 @@ bool V_StrSubst(
 	bool bCaseSensitive
 	)
 {
-	int replaceFromLen = V_strlen( pMatch );
-	int replaceToLen = V_strlen( pReplaceWith );
+	int replaceFromLen = strlen( pMatch );
+	int replaceToLen = strlen( pReplaceWith );
 
 	const char *pInStart = pIn;
 	char *pOutPos = pOut;
@@ -2683,7 +2451,7 @@ bool V_StrSubst(
 		else
 		{
 			// We're at the end of pIn. Copy whatever remains and get out.
-			int copyLen = V_strlen( pInStart );
+			int copyLen = strlen( pInStart );
 			V_strncpy( pOutPos, pInStart, nRemainingOut );
 			return ( copyLen <= nRemainingOut-1 );
 		}
@@ -2695,9 +2463,9 @@ char* AllocString( const char *pStr, int nMaxChars )
 {
 	int allocLen;
 	if ( nMaxChars == -1 )
-		allocLen = V_strlen( pStr ) + 1;
+		allocLen = strlen( pStr ) + 1;
 	else
-		allocLen = min( (int)V_strlen(pStr), nMaxChars ) + 1;
+		allocLen = min( (int)strlen(pStr), nMaxChars ) + 1;
 
 	char *pOut = new char[allocLen];
 	V_strncpy( pOut, pStr, allocLen );
@@ -2726,7 +2494,7 @@ void V_SplitString2( const char *pString, const char **pSeparators, int nSeparat
 		if ( pFirstSeparator )
 		{
 			// Split on this separator and continue on.
-			int separatorLen = V_strlen( pSeparators[iFirstSeparator] );
+			int separatorLen = strlen( pSeparators[iFirstSeparator] );
 			if ( pFirstSeparator > pCurPos )
 			{
 				outStrings.AddToTail( AllocString( pCurPos, pFirstSeparator-pCurPos ) );
@@ -2737,7 +2505,7 @@ void V_SplitString2( const char *pString, const char **pSeparators, int nSeparat
 		else
 		{
 			// Copy the rest of the string
-			if ( V_strlen( pCurPos ) )
+			if ( strlen( pCurPos ) )
 			{
 				outStrings.AddToTail( AllocString( pCurPos, -1 ) );
 			}
@@ -2746,55 +2514,10 @@ void V_SplitString2( const char *pString, const char **pSeparators, int nSeparat
 	}
 }
 
-void V_SplitString2( const char *pString, const char * const *pSeparators, int nSeparators, CUtlVector<CUtlString> &outStrings, bool bIncludeEmptyStrings )
-{
-	outStrings.Purge();
-	const char *pCurPos = pString;
-	for ( ;; )
-	{
-		int iFirstSeparator = -1;
-		const char *pFirstSeparator = 0;
-		for ( int i = 0; i < nSeparators; i++ )
-		{
-			const char *pTest = V_stristr_fast( pCurPos, pSeparators[i] );
-			if ( pTest && (!pFirstSeparator || pTest < pFirstSeparator) )
-			{
-				iFirstSeparator = i;
-				pFirstSeparator = pTest;
-			}
-		}
-
-		if ( pFirstSeparator )
-		{
-			// Split on this separator and continue on.
-			int separatorLen = (int)V_strlen( pSeparators[iFirstSeparator] );
-			if ( pFirstSeparator > pCurPos || (pFirstSeparator == pCurPos && bIncludeEmptyStrings) )
-			{
-				outStrings[outStrings.AddToTail()].SetDirect( pCurPos, (int)( pFirstSeparator - pCurPos ) );
-			}
-
-			pCurPos = pFirstSeparator + separatorLen;
-		}
-		else
-		{
-			// Copy the rest of the string, if there's anything there
-			if ( pCurPos[0] != 0 )
-			{
-				outStrings[outStrings.AddToTail()].Set( pCurPos );
-			}
-			return;
-		}
-	}
-}
 
 void V_SplitString( const char *pString, const char *pSeparator, CUtlVector<char*> &outStrings )
 {
 	V_SplitString2( pString, &pSeparator, 1, outStrings );
-}
-
-void V_SplitString( const char *pString, const char *pSeparator, CUtlVector<CUtlString> &outStrings, bool bIncludeEmptyStrings )
-{
-	V_SplitString2( pString, &pSeparator, 1, outStrings, bIncludeEmptyStrings );
 }
 
 
@@ -2819,7 +2542,7 @@ void V_StrSlice( const char *pStr, int firstChar, int lastCharNonInclusive, char
 	if ( outSize == 0 )
 		return;
 	
-	int length = V_strlen( pStr );
+	int length = strlen( pStr );
 
 	// Fixup the string indices.
 	if ( firstChar < 0 )
@@ -2877,14 +2600,14 @@ void V_StrLeft( const char *pStr, int nChars, char *pOut, int outSize )
 
 void V_StrRight( const char *pStr, int nChars, char *pOut, int outSize )
 {
-	int len = V_strlen( pStr );
+	int len = strlen( pStr );
 	if ( nChars >= len )
 	{
 		V_strncpy( pOut, pStr, outSize );
 	}
 	else
 	{
-		V_StrSlice( pStr, -nChars, V_strlen( pStr ), pOut, outSize );
+		V_StrSlice( pStr, -nChars, strlen( pStr ), pOut, outSize );
 	}
 }
 
@@ -3230,7 +2953,7 @@ extern "C" void qsort_s( void *base, size_t num, size_t width, int (*compare )(v
 
 void V_qsort_s( void *base, size_t num, size_t width, int ( __cdecl *compare )(void *, const void *, const void *), void * context ) 
 {
-#if defined OSX
+#if defined(OSX) || defined(PLATFORM_BSD)
 	// the arguments are swapped 'round on the mac - awesome, huh?
 	return qsort_r( base, num, width, context, compare );
 #else
@@ -3622,8 +3345,9 @@ const Tier1FullHTMLEntity_t g_Tier1_FullHTMLEntities[] =
 	{ L'\u00FF', "&yuml;", 6 },
 	{ 0, NULL, 0 } // sentinel for end of array
 };
+#ifdef _WIN32
 #pragma warning( pop )
-
+#endif
 
 
 bool V_BasicHtmlEntityEncode( char *pDest, const int nDestSize, char const *pIn, const int nInSize, bool bPreserveWhitespace /*= false*/ )
@@ -4614,3 +4338,5 @@ void V_StripAndPreserveHTML( CUtlBuffer *pbuffer, const char *pchHTML, const cha
 	const char *rgszNoCloseTags[] = { "br", "img" };
 	V_StripAndPreserveHTMLCore( pbuffer, pchHTML, rgszPreserveTags, cPreserveTags, rgszNoCloseTags, V_ARRAYSIZE( rgszNoCloseTags ), cMaxResultSize );
 }
+
+

@@ -25,8 +25,8 @@ typedef unsigned short wchar_t;
 
 
 // direct references to localized strings
-typedef uint32 StringIndex_t;
-const uint32 INVALID_LOCALIZE_STRING_INDEX = (StringIndex_t) -1;
+typedef unsigned long StringIndex_t;
+const unsigned long INVALID_LOCALIZE_STRING_INDEX = (StringIndex_t) -1;
 
 //-----------------------------------------------------------------------------
 // Purpose: Handles localization of text
@@ -156,6 +156,20 @@ private:
 	static void ConstructStringKeyValuesInternal(OUT_Z_BYTECAP(unicodeBufferSizeInBytes) wchar_t *unicodeOutput, int unicodeBufferSizeInBytes, const wchar_t *formatString, KeyValues *localizationVariables);
 };
 
+#ifdef GC
+
+	typedef char locchar_t;
+
+	#define loc_snprintf	Q_snprintf
+	#define loc_sprintf_safe V_sprintf_safe
+	#define loc_sncat		Q_strncat
+	#define loc_scat_safe	V_strcat_safe
+	#define loc_sncpy		Q_strncpy
+	#define loc_scpy_safe	V_strcpy_safe
+	#define loc_strlen		Q_strlen
+	#define LOCCHAR( x )	x
+
+#else
 
 	typedef wchar_t locchar_t;
 
@@ -167,10 +181,8 @@ private:
 	#define loc_scpy_safe	V_wcscpy_safe
 	#define loc_strlen		Q_wcslen
 	#define LOCCHAR(x)		L ## x
-	#define LOCCHAR_FMT_LOCPRINTF L"%ls"
-	#define LOCCHAR_FMT_PRINTF    "%ls"
-	#define LOCCHAR_FMT_WPRINTF   L"%ls"
 
+#endif
 
 // --------------------------------------------------------------------------
 // Purpose:

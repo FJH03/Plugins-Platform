@@ -11,13 +11,14 @@
 
 #include "datamap.h"
 
+
 typedef struct phyheader_s
 {
 	DECLARE_BYTESWAP_DATADESC();
 	int		size;
 	int		id;
 	int		solidCount;
-	int32	checkSum;	// checksum of source .mdl file
+	int		checkSum;	// checksum of source .mdl file
 } phyheader_t;
 
 #endif // PHYFILE_H

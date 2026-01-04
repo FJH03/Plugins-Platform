@@ -67,7 +67,7 @@ class IConVar;
 
 // Engine player info, no game related infos here
 // If you change this, change the two byteswap defintions: 
-// cdll_client_int.cpp and host.cpp
+// cdll_client_int.cpp and cdll_engine_int.cpp
 typedef struct player_info_s
 {
 	DECLARE_BYTESWAP_DATADESC();
@@ -93,6 +93,10 @@ typedef struct player_info_s
 	CRC32_t			customFiles[MAX_CUSTOM_FILES];
 	// this counter increases each time the server downloaded a new file
 	unsigned char	filesDownloaded;
+	// player score
+	int 			score;
+	// player time connected
+	float			time_connected;
 } player_info_t;
 
 
@@ -575,8 +579,6 @@ public:
 	virtual void DisconnectInternal() = 0;
 
 	virtual int GetInstancesRunningCount( ) = 0;
-
-	virtual void SetRichPresenceConnect( const char *pszOverride ) = 0;
 };
 
 
@@ -792,9 +794,7 @@ public:
 
 	virtual bool IsConnectedUserInfoChangeAllowed( IConVar *pCvar ) = 0;
 
-	virtual bool BHaveChatSuspensionInCurrentMatch() = 0;
-
-	virtual void DisplayVoiceUnavailableMessage() = 0;
+	virtual void IN_TouchEvent( int type, int fingerId, int x, int y ) = 0;
 };
 
 #define CLIENT_DLL_INTERFACE_VERSION		"VClient017"

@@ -17,8 +17,10 @@
 
 #include "mathlib/math_pfns.h"
 
+#if defined(__i386__) || defined(_M_IX86)
 // For MMX intrinsics
 #include <xmmintrin.h>
+#endif
 
 // XXX remove me
 #undef clamp
@@ -27,7 +29,6 @@
 // This can help track down FP bugs. However the code is not
 // FP exception clean so this not a turnkey operation.
 //#define FP_EXCEPTIONS_ENABLED
-
 
 #ifdef FP_EXCEPTIONS_ENABLED
 #include <float.h> // For _clearfp and _controlfp_s
@@ -91,37 +92,11 @@ private:
 	FPExceptionEnabler& operator=(const FPExceptionEnabler&);
 };
 
-
-
-#ifdef DEBUG  // stop crashing edit-and-continue
-FORCEINLINE float clamp( float val, float minVal, float maxVal )
+inline float clamp( const float val, const float minVal, const float maxVal )
 {
-	if ( maxVal < minVal )
-		return maxVal;
-	else if( val < minVal )
-		return minVal;
-	else if( val > maxVal )
-		return maxVal;
-	else
-		return val;
+	const float t = val < minVal ? minVal : val;
+	return t > maxVal ? maxVal : t;
 }
-#else // DEBUG
-FORCEINLINE float clamp( float val, float minVal, float maxVal )
-{
-#if defined( PLATFORM_INTEL )
-	_mm_store_ss( &val,
-		_mm_min_ss(
-			_mm_max_ss(
-				_mm_load_ss(&val),
-				_mm_load_ss(&minVal) ),
-			_mm_load_ss(&maxVal) ) );
-#else
-	val = fpmax(minVal, val);
-	val = fpmin(maxVal, val);
-#endif
-	return val;
-}
-#endif // DEBUG
 
 //
 // Returns a clamped value in the range [min, max].
@@ -129,16 +104,9 @@ FORCEINLINE float clamp( float val, float minVal, float maxVal )
 template< class T >
 inline T clamp( T const &val, T const &minVal, T const &maxVal )
 {
-	if ( maxVal < minVal )
-		return maxVal;
-	else if( val < minVal )
-		return minVal;
-	else if( val > maxVal )
-		return maxVal;
-	else
-		return val;
+	const T t = val< minVal ? minVal : val;
+	return t > maxVal ? maxVal : t;
 }
-
 
 // plane_t structure
 // !!! if this is changed, it must be changed in asm code too !!!
@@ -235,9 +203,8 @@ bool R_CullBoxSkipNear( const Vector& mins, const Vector& maxs, const Frustum_t 
 
 struct matrix3x4_t
 {
-	matrix3x4_t() = default;
-
-	matrix3x4_t( 
+	inline matrix3x4_t() = default;
+	inline matrix3x4_t(
 		float m00, float m01, float m02, float m03,
 		float m10, float m11, float m12, float m13,
 		float m20, float m21, float m22, float m23 )
@@ -251,7 +218,7 @@ struct matrix3x4_t
 	// Creates a matrix where the X axis = forward
 	// the Y axis = left, and the Z axis = up
 	//-----------------------------------------------------------------------------
-	void Init( const Vector& xAxis, const Vector& yAxis, const Vector& zAxis, const Vector &vecOrigin )
+	inline void Init( const Vector& xAxis, const Vector& yAxis, const Vector& zAxis, const Vector &vecOrigin )
 	{
 		m_flMatVal[0][0] = xAxis.x; m_flMatVal[0][1] = yAxis.x; m_flMatVal[0][2] = zAxis.x; m_flMatVal[0][3] = vecOrigin.x;
 		m_flMatVal[1][0] = xAxis.y; m_flMatVal[1][1] = yAxis.y; m_flMatVal[1][2] = zAxis.y; m_flMatVal[1][3] = vecOrigin.y;
@@ -262,26 +229,23 @@ struct matrix3x4_t
 	// Creates a matrix where the X axis = forward
 	// the Y axis = left, and the Z axis = up
 	//-----------------------------------------------------------------------------
-	matrix3x4_t( const Vector& xAxis, const Vector& yAxis, const Vector& zAxis, const Vector &vecOrigin )
+	inline matrix3x4_t( const Vector& xAxis, const Vector& yAxis, const Vector& zAxis, const Vector &vecOrigin )
 	{
 		Init( xAxis, yAxis, zAxis, vecOrigin );
 	}
 
 	inline void Invalidate( void )
 	{
-		for (int i = 0; i < 3; i++)
+		for( int i=0; i < 12; i++ )
 		{
-			for (int j = 0; j < 4; j++)
-			{
-				m_flMatVal[i][j] = VEC_T_NAN;
-			}
+			((float*)m_flMatVal)[i] = VEC_T_NAN;
 		}
 	}
 
-	float *operator[]( int i )				{ Assert(( i >= 0 ) && ( i < 3 )); return m_flMatVal[i]; }
-	const float *operator[]( int i ) const	{ Assert(( i >= 0 ) && ( i < 3 )); return m_flMatVal[i]; }
-	float *Base()							{ return &m_flMatVal[0][0]; }
-	const float *Base() const				{ return &m_flMatVal[0][0]; }
+	inline float *operator[]( int i )				{ Assert(( i >= 0 ) && ( i < 3 )); return m_flMatVal[i]; }
+	inline const float *operator[]( int i ) const	{ Assert(( i >= 0 ) && ( i < 3 )); return m_flMatVal[i]; }
+	inline float *Base()							{ return &m_flMatVal[0][0]; }
+	inline const float *Base() const				{ return &m_flMatVal[0][0]; }
 
 	float m_flMatVal[3][4];
 };
@@ -434,7 +398,46 @@ inline vec_t RoundInt (vec_t in)
 	return floor(in + 0.5f);
 }
 
-int Q_log2(int val);
+inline int Q_log2(int val)
+{
+	int answer=0;
+	while (val>>=1)
+		answer++;
+	return answer;
+}
+
+// Math routines done in optimized assembly math package routines
+void inline SinCos( float radians, float *sine, float *cosine )
+{
+#if 1
+	// AndraMidoxXx:Better and faster way sincos implementation
+	*sine = sin( radians );
+	*cosine = cos( radians );
+#else //cut this shit!!
+#if defined( _X360 )
+	XMScalarSinCos( sine, cosine, radians );
+#elif defined( PLATFORM_WINDOWS_PC32 )
+	_asm
+	{
+		fld		DWORD PTR [radians]
+		fsincos
+
+		mov edx, DWORD PTR [cosine]
+		mov eax, DWORD PTR [sine]
+
+		fstp DWORD PTR [edx]
+		fstp DWORD PTR [eax]
+	}
+#elif defined( PLATFORM_WINDOWS_PC64 )
+	*sine = sin( radians );
+	*cosine = cos( radians );
+#elif defined( OSX )
+    __sincosf(radians, sine, cosine);
+#elif defined( POSIX )
+	sincosf(radians, sine, cosine);
+#endif //bullshit
+#endif //1
+}
 
 #define SIN_TABLE_SIZE	256
 #define FTOIBIAS		12582912.f
@@ -537,7 +540,13 @@ void MatrixInvert( const matrix3x4_t &in, matrix3x4_t &out );
 bool MatricesAreEqual( const matrix3x4_t &src1, const matrix3x4_t &src2, float flTolerance = 1e-5 );
 
 void MatrixGetColumn( const matrix3x4_t &in, int column, Vector &out );
-void MatrixSetColumn( const Vector &in, int column, matrix3x4_t &out );
+
+inline void MatrixSetColumn( const Vector &in, int column, matrix3x4_t& out )
+{
+	out[0][column] = in.x;
+	out[1][column] = in.y;
+	out[2][column] = in.z;
+}
 
 inline void MatrixGetTranslation( const matrix3x4_t &in, Vector &out )
 {
@@ -1051,7 +1060,19 @@ void VectorYawRotate( const Vector& in, float flYaw, Vector &out);
 // 0                   1
 //
 // With a biasAmt of 0.5, Bias returns X.
-float Bias( float x, float biasAmt );
+inline float Bias( float x, float biasAmt )
+{
+	// WARNING: not thread safe
+	static float lastAmt = -1;
+	static float lastExponent = 0;
+	if( lastAmt != biasAmt )
+	{
+		lastExponent = log( biasAmt ) * -1.4427f; // (-1.4427 = 1 / log(0.5))
+	}
+	float fRet = pow( x, lastExponent );
+	Assert ( !IS_NAN( fRet ) );
+	return fRet;
+}
 
 
 // Gain is similar to Bias, but biasAmt biases towards or away from 0.5.
@@ -1083,9 +1104,14 @@ float Bias( float x, float biasAmt );
 // |*****
 // |___________________
 // 0                   1
-float Gain( float x, float biasAmt );
-
-
+inline float Gain( float x, float biasAmt )
+{
+	// WARNING: not thread safe
+	if( x < 0.5 )
+		return 0.5f * Bias( 2*x, 1-biasAmt );
+	else
+		return 1 - 0.5f * Bias( 2 - 2*x, 1-biasAmt );
+}
 // SmoothCurve maps a 0-1 value into another 0-1 value based on a cosine wave
 // where the derivatives of the function at 0 and 1 (and 0.5) are 0. This is useful for
 // any fadein/fadeout effect where it should start and end smoothly.
@@ -1174,7 +1200,7 @@ inline float SimpleSplineRemapValClamped( float val, float A, float B, float C, 
 
 FORCEINLINE int RoundFloatToInt(float f)
 {
-#if defined( PLATFORM_INTEL )
+#if defined(__i386__) || defined(_M_IX86) || defined( PLATFORM_WINDOWS_PC64 ) || defined(__x86_64__)
 	return _mm_cvtss_si32(_mm_load_ss(&f));
 #elif defined( _X360 )
 #ifdef Assert
@@ -1187,6 +1213,8 @@ FORCEINLINE int RoundFloatToInt(float f)
 	};
 	flResult = __fctiw( f );
 	return pResult[1];
+#elif defined (__arm__) ||  defined (__aarch64__)
+        return (int)(f + 0.5f);
 #else
 #error Unknown architecture
 #endif
@@ -1217,8 +1245,9 @@ FORCEINLINE unsigned long RoundFloatToUnsignedLong(float f)
 	Assert( pIntResult[1] >= 0 );
 	return pResult[1];
 #else  // !X360
-	
-#if defined( PLATFORM_WINDOWS_PC64 )
+#if defined(__arm__) || defined(__aarch64__)
+        return (unsigned long)(f + 0.5f);
+#elif defined( PLATFORM_WINDOWS_PC64 )
 	uint nRet = ( uint ) f;
 	if ( nRet & 1 )
 	{
@@ -1281,7 +1310,7 @@ FORCEINLINE int Float2Int( float a )
 inline int Floor2Int( float a )
 {
 	int RetVal;
-#if defined( PLATFORM_INTEL )
+#if defined( __i386__ )
 	// Convert to int and back, compare, subtract one if too big
 	__m128 a128 = _mm_set_ss(a);
 	RetVal = _mm_cvtss_si32(a128);
@@ -1298,7 +1327,7 @@ inline int Floor2Int( float a )
 //-----------------------------------------------------------------------------
 FORCEINLINE unsigned int FastFToC( float c )
 {
-#if VALVE_LITTLE_ENDIAN
+#if defined( __i386__ )
 	// IEEE float bit manipulation works for values between [0, 1<<23)
 	union { float f; int i; } convert = { c*255.0f + (float)(1<<23) };
 	return convert.i & 255;
@@ -1313,7 +1342,7 @@ FORCEINLINE unsigned int FastFToC( float c )
 //-----------------------------------------------------------------------------
 FORCEINLINE int FastFloatToSmallInt( float c )
 {
-#if VALVE_LITTLE_ENDIAN
+#if defined( __i386__ )
 	// IEEE float bit manipulation works for values between [-1<<22, 1<<22)
 	union { float f; int i; } convert = { c + (float)(3<<22) };
 	return (convert.i & ((1<<23)-1)) - (1<<22);
@@ -1338,7 +1367,7 @@ inline float ClampToMsec( float in )
 inline int Ceil2Int( float a )
 {
    int RetVal;
-#if defined( PLATFORM_INTEL )
+#if defined( __i386__ )
    // Convert to int and back, compare, add one if too small
    __m128 a128 = _mm_load_ss(&a);
    RetVal = _mm_cvtss_si32(a128);
@@ -1844,8 +1873,21 @@ inline void MatrixITransformPlane( const matrix3x4_t &src, const cplane_t &inPla
 	outPlane.dist -= outPlane.normal.x * vecInvTranslation[0] + outPlane.normal.y * vecInvTranslation[1] + outPlane.normal.z * vecInvTranslation[2];
 }
 
-int CeilPow2( int in );
-int FloorPow2( int in );
+inline int CeilPow2( int in )
+{
+	int retval = 1;
+	while( retval < in )
+		retval <<= 1;
+	return retval;
+}
+
+inline int FloorPow2( int in )
+{
+	int retval = 1;
+	while( retval < in )
+		retval <<= 1;
+	return retval >> 1;
+}
 
 FORCEINLINE float * UnpackNormal_HEND3N( const unsigned int *pPackedNormal, float *pNormal )
 {

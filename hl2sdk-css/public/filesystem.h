@@ -21,6 +21,8 @@
 #include "tier1/checksum_md5.h"
 #include "tier1/refcount.h"
 
+#include <time.h>
+
 #ifdef _WIN32
 #pragma once
 #endif
@@ -521,7 +523,7 @@ public:
 	virtual bool			IsFileWritable( char const *pFileName, const char *pPathID = 0 ) = 0;
 	virtual bool			SetFileWritable( char const *pFileName, bool writable, const char *pPathID = 0 ) = 0;
 
-	virtual long			GetFileTime( const char *pFileName, const char *pPathID = 0 ) = 0;
+	virtual time_t			GetFileTime( const char *pFileName, const char *pPathID = 0 ) = 0;
 
 	//--------------------------------------------------------
 	// Reads/writes files to utlbuffers. Use this for optimal read performance when doing open/read/close
@@ -616,7 +618,7 @@ public:
 	// File I/O and info
 	virtual bool			IsDirectory( const char *pFileName, const char *pathID = 0 ) = 0;
 
-	virtual void			FileTimeToString( char* pStrip, int maxCharsIncludingTerminator, long fileTime ) = 0;
+	virtual void			FileTimeToString( char* pStrip, int maxCharsIncludingTerminator, time_t fileTime ) = 0;
 
 	//--------------------------------------------------------
 	// Open file operations
@@ -712,7 +714,7 @@ public:
 	virtual void AsyncRemoveFetcher( IAsyncFileFetch *pFetcher ) = 0;
 
 	//------------------------------------
-	// Functions to hold a file open if planning on doing multiple reads. Use is optional,
+	// Functions to hold a file open if planning on doing mutiple reads. Use is optional,
 	// and is taken only as a hint
 	//------------------------------------
 	virtual FSAsyncStatus_t	AsyncBeginRead( const char *pszFile, FSAsyncFile_t *phFile ) = 0;
@@ -844,7 +846,7 @@ public:
 	}
 
 	virtual int			GetPathIndex( const FileNameHandle_t &handle ) = 0;
-	virtual long		GetPathTime( const char *pPath, const char *pPathID ) = 0;
+	virtual time_t		GetPathTime( const char *pPath, const char *pPathID ) = 0;
 
 	virtual DVDMode_t	GetDVDMode() = 0;
 
@@ -926,12 +928,6 @@ public:
 	{
 		return GetCaseCorrectFullPath_Ptr( pFullPath, pDest, (int)maxLenInChars );
 	}
-
-	// Whether we are allowed to write anywhere (default) or just to our search paths.
-	// By default, we can write everywhere--but the game client locks us down to writing in specific places, because
-	// remote users can coerce us into writing things down via a clickable URL.
-	virtual void			SetWriteProtectionEnable( bool bEnable ) = 0;
-	virtual bool			GetWriteProtectionEnable() const = 0;
 };
 
 //-----------------------------------------------------------------------------
@@ -1012,7 +1008,7 @@ inline unsigned IFileSystem::GetOptimalReadSize( FileHandle_t hFile, unsigned nL
 // Async memory tracking
 //-----------------------------------------------------------------------------
 
-#if defined(USE_MEM_DEBUG)
+#if (defined(_DEBUG) || defined(USE_MEM_DEBUG))
 #define AsyncRead( a, b ) AsyncReadCreditAlloc( a, __FILE__, __LINE__, b )
 #define AsyncReadMutiple( a, b, c ) AsyncReadMultipleCreditAlloc( a, b, __FILE__, __LINE__, c )
 #endif

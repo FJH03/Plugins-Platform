@@ -33,8 +33,6 @@
 #include "xbox\xbox_win32stubs.h"
 #endif
 
-#include "steam/steam_api.h"
-
 // memdbgon must be the last include file in a .cpp file!!!
 #include <tier0/memdbgon.h>
 
@@ -59,8 +57,6 @@ void FileSystem_UseVProjectBinDir( bool bEnable )
 {
 	s_bUseVProjectBinDir = bEnable;
 }
-
-bool FileSystem_AllowedSearchPath( const char *pchPath );
 
 // This class lets you modify environment variables, and it restores the original value
 // when it goes out of scope.
@@ -288,29 +284,6 @@ KeyValues* ReadKeyValuesFile( const char *pFilename )
 	return kv;
 }
 
-
-static char szSDKExecDir[4096];
-const char* GetSDKExecDir()
-{
-#if defined( _WIN32 )
-	// misyl: In Windows, getenv doesn't update after the application has already launched.
-	if ( GetEnvironmentVariableA( "SDK_EXEC_DIR", szSDKExecDir, sizeof( szSDKExecDir ) ) )
-	{
-		if ( *szSDKExecDir )
-			return szSDKExecDir;
-	}
-#else
-	const char* pszEnv = getenv( "SDK_EXEC_DIR" );
-	if ( pszEnv && *pszEnv )
-	{
-		V_strncpy( szSDKExecDir, pszEnv, sizeof( szSDKExecDir ) );
-		return szSDKExecDir;
-	}
-#endif
-
-	return nullptr;
-}
-
 static bool Sys_GetExecutableName( char *out, int len )
 {
 #if defined( _WIN32 )
@@ -334,6 +307,9 @@ static bool Sys_GetExecutableName( char *out, int len )
 
 bool FileSystem_GetExecutableDir( char *exedir, int exeDirLen )
 {
+#ifdef ANDROID
+	Q_snprintf( exedir, exeDirLen, "%s", getenv("APP_LIB_PATH") );
+#else
 	exedir[0] = 0;
 
 	if ( s_bUseVProjectBinDir )
@@ -346,13 +322,7 @@ bool FileSystem_GetExecutableDir( char *exedir, int exeDirLen )
 		}
 		if ( pProject )
 		{
-
-			// Only used by external code, i.e. maya but needed so app system loads the correct game DLLs
-			#ifdef WIN64
-			Q_snprintf( exedir, exeDirLen, "%s%c..%cbin%cx64", pProject, CORRECT_PATH_SEPARATOR, CORRECT_PATH_SEPARATOR, CORRECT_PATH_SEPARATOR );
-			#else
 			Q_snprintf( exedir, exeDirLen, "%s%c..%cbin", pProject, CORRECT_PATH_SEPARATOR, CORRECT_PATH_SEPARATOR );
-			#endif //
 			return true;
 		}
 		return false;
@@ -372,41 +342,39 @@ bool FileSystem_GetExecutableDir( char *exedir, int exeDirLen )
 		}
 	}
 
-	{
-		const char* pszSDKExecDir = GetSDKExecDir();
-		if ( pszSDKExecDir )
-		{
-			V_strncpy( exedir, pszSDKExecDir, exeDirLen );
-		}
-	}
-
 	Q_FixSlashes( exedir );
+
+	const char* libDir = "bin";
 
 	// Return the bin directory as the executable dir if it's not in there
 	// because that's really where we're running from...
 	char ext[MAX_PATH];
-	Q_StrRight( exedir, V_strlen( PLATFORM_BIN_DIR ) + 1, ext, sizeof(ext));
-	if ( ext[0] != CORRECT_PATH_SEPARATOR || Q_stricmp( ext+1, PLATFORM_BIN_DIR ) != 0 )
+	Q_StrRight( exedir, 4, ext, sizeof( ext ) );
+	if ( ext[0] != CORRECT_PATH_SEPARATOR || Q_stricmp( ext+1, libDir ) != 0 )
 	{
 		Q_strncat( exedir, CORRECT_PATH_SEPARATOR_S, exeDirLen, COPY_ALL_CHARACTERS );
-		Q_strncat( exedir, PLATFORM_BIN_DIR, exeDirLen, COPY_ALL_CHARACTERS );
+		Q_strncat( exedir, libDir, exeDirLen, COPY_ALL_CHARACTERS );
 		Q_FixSlashes( exedir );
 	}
-	
+#endif
+
 	return true;
 }
 
 static bool FileSystem_GetBaseDir( char *baseDir, int baseDirLen )
 {
+#ifdef ANDROID
+	strncpy(baseDir, getenv("VALVE_GAME_PATH"), baseDirLen);
+	return true;
+#else
 	if ( FileSystem_GetExecutableDir( baseDir, baseDirLen ) )
 	{
 		Q_StripFilename( baseDir );
-		if ( PLATFORM_DIR[0] != '\0' )
-			Q_StripFilename( baseDir );
 		return true;
 	}
-	
+
 	return false;
+#endif
 }
 
 void LaunchVConfig()
@@ -571,75 +539,6 @@ static int SortStricmp( char * const * sz1, char * const * sz2 )
 	return V_stricmp( *sz1, *sz2 );
 }
 
-#ifdef _WIN32
-static void Plat_OpenURL( const char *pchURL )
-{
-	ShellExecuteA(0, 0, pchURL, 0, 0 , SW_SHOW );
-}
-#elif defined( LINUX )
-static void Plat_OpenURL( const char *pchURL )
-{
-	// from SteamVR
-	if( !pchURL || !*pchURL )
-		return;
-
-	char szFullCommand[4096];
-
-	V_sprintf_safe( szFullCommand, "xdg-open '%s' &", pchURL );
-
-    int nResult = system( szFullCommand );
-    if ( nResult == -1 )
-    {
-        Warning( "Plat_OpenURL: Failed to execute '%s'\n", szFullCommand );
-    }
-}
-#endif
-
-struct Source1AppidInfo_t
-{
-	uint32 nAppId;
-	const char *pszName;
-} g_Source1Appids[]
-{
-	{ 220, "Half-Life 2" },
-	{ 320, "Half-Life 2: Deathmatch" },
-	{ 340, "Half-Life 2: Lost Coast" },
-	// Deprecated.
-	//{ 380, "Half-Life 2: Episode One" },
-	//{ 420, "Half-Life 2: Episode Two" },
-
-	{ 240, "Counter-Strike: Source" },
-	{ 300, "Day of Defeat: Source" },
-
-	{ 280, "Half-Life: Source" },
-	{ 360, "Half-Life Deathmatch: Source" },
-
-	{ 440, "Team Fortress 2" },
-
-	{ 400, "Portal" },
-	{ 620, "Portal 2" },
-	{ 500, "Left 4 Dead" },
-	{ 550, "Left 4 Dead 2" },
-	{ 630, "Alien Swarm" },
-
-	{ 243750, "Source SDK Base 2013 Multiplayer" },
-	{ 243730, "Source SDK Base 2013 Singleplayer" },
-	{ 218, "Source SDK Base 2007" },
-	{ 215, "Source SDK Base 2006" },
-	{ 211, "Source SDK (Legacy)" },
-};
-
-const Source1AppidInfo_t *GetKnownAppidInfo( uint32 nAppid )
-{
-	for ( int i = 0; i < ARRAYSIZE( g_Source1Appids ); i++ )
-	{
-		if ( nAppid == g_Source1Appids[i].nAppId )
-			return &g_Source1Appids[i];
-	}
-
-	return nullptr;
-}
-
 FSReturnCode_t FileSystem_LoadSearchPaths( CFSSearchPathsInit &initInfo )
 {
 	if ( !initInfo.m_pFileSystem || !initInfo.m_pDirectoryName )
@@ -655,12 +554,13 @@ FSReturnCode_t FileSystem_LoadSearchPaths( CFSSearchPathsInit &initInfo )
 	if ( !FileSystem_GetBaseDir( baseDir, sizeof( baseDir ) ) )
 		return SetupFileSystemError( false, FS_INVALID_PARAMETERS, "FileSystem_GetBaseDir failed." );
 
+	Msg("filesystem BaseDir: %s\n", baseDir);
+
 	// The MOD directory is always the one that contains gameinfo.txt
 	Q_strncpy( initInfo.m_ModPath, initInfo.m_pDirectoryName, sizeof( initInfo.m_ModPath ) );
 
 	#define GAMEINFOPATH_TOKEN		"|gameinfo_path|"
 	#define BASESOURCEPATHS_TOKEN	"|all_source_engine_paths|"
-	#define APPID_PREFIX_TOKEN		"|appid_"
 
 	const char *pszExtraSearchPath = CommandLine()->ParmValue( "-insert_search_path" );
 	if ( pszExtraSearchPath )
@@ -681,75 +581,28 @@ FSReturnCode_t FileSystem_LoadSearchPaths( CFSSearchPathsInit &initInfo )
 		}
 	}
 
+	const char *ExtraVpkPaths = getenv( "EXTRAS_VPK_PATH" );
+	char szAbsSearchPath[MAX_PATH];
+
+	if( ExtraVpkPaths )
+	{
+		CUtlStringList vecPaths;
+		V_SplitString( ExtraVpkPaths, ",", vecPaths );
+
+		FOR_EACH_VEC( vecPaths, idxExtraPath )
+		{
+			FileSystem_AddLoadedSearchPath( initInfo, "PLATFORM", vecPaths[idxExtraPath], false );
+			FileSystem_AddLoadedSearchPath( initInfo, "GAME", vecPaths[idxExtraPath], false );
+		}
+	}
+
 	bool bLowViolence = initInfo.m_bLowViolence;
 	for ( KeyValues *pCur=pSearchPaths->GetFirstValue(); pCur; pCur=pCur->GetNextValue() )
 	{
-		const char *pszPathID = pCur->GetName();
 		const char *pLocation = pCur->GetString();
 		const char *pszBaseDir = baseDir;
-#ifdef ENGINE_DLL
-		char szAppInstallDir[ 1024 ];
-#endif
 
-		if ( !FileSystem_AllowedSearchPath( pLocation ) )
-			continue;
-
-		if ( Q_stristr( pLocation, APPID_PREFIX_TOKEN ) == pLocation )
-		{
-#ifdef ENGINE_DLL
-			pLocation += strlen( APPID_PREFIX_TOKEN );
-			const char *pNumberLoc = pLocation;
-			int nAppId = V_atoi( pNumberLoc );
-			pLocation = Q_stristr( pLocation, "|" );
-			if ( !pLocation )
-			{
-				Error( "Malformed gameinfo.txt" );
-			}
-			pLocation += strlen( "|" );
-
-			if ( !nAppId )
-			{
-				Error( "Can't mount content from invalid appid." );
-			}
-
-			if ( !SteamApps() )
-			{
-				Error( "No SteamApps connection." );
-			}
-
-			const Source1AppidInfo_t *pKnownAppid = GetKnownAppidInfo( nAppId );
-
-			const char *pszAppName = pKnownAppid ? pKnownAppid->pszName : "Unknown";
-
-			if ( !SteamApps()->BIsSubscribedApp( nAppId ) )
-			{
-				char szStoreCommand[4096];
-				V_sprintf_safe( szStoreCommand, "steam://store/%d", nAppId );
-				Plat_OpenURL( szStoreCommand );
-
-				Error( "This mod requires that you own %s (%d). Please purchase it, and install it to play this mod.", pszAppName, nAppId );
-			}
-
-			if ( !SteamApps()->BIsAppInstalled( nAppId ) )
-			{
-				char szInstallCommand[4096];
-				V_sprintf_safe( szInstallCommand, "steam://install/%d", nAppId );
-				Plat_OpenURL( szInstallCommand );
-
-				Error( "This mod requires %s (%d) to be installed. Please install it to play this mod.", pszAppName, nAppId );
-			}
-
-			uint32 unLength = SteamApps()->GetAppInstallDir( nAppId, szAppInstallDir, sizeof( szAppInstallDir ) );
-			if ( !unLength )
-			{
-				Error( "Couldn't get install dir for appid: %d", nAppId );
-			}
-			pszBaseDir = szAppInstallDir;
-#else
-			Error( "Appid based mounting is not supported on non-engine DLL projects." );
-#endif
-		}
-		else if ( Q_stristr( pLocation, GAMEINFOPATH_TOKEN ) == pLocation )
+		if ( Q_stristr( pLocation, GAMEINFOPATH_TOKEN ) == pLocation )
 		{
 			pLocation += strlen( GAMEINFOPATH_TOKEN );
 			pszBaseDir = initInfo.m_pDirectoryName;
@@ -764,18 +617,12 @@ FSReturnCode_t FileSystem_LoadSearchPaths( CFSSearchPathsInit &initInfo )
 			// We need a special identifier in the gameinfo.txt here because the base hl2 folder exists in different places.
 			// In the case of a game or a Steam-launched dedicated server, all the necessary prior engine content is mapped in with the Steam depots,
 			// so we can just use the path as-is.
+
 			pLocation += strlen( BASESOURCEPATHS_TOKEN );
 		}
 
-		char szBinLocation[MAX_PATH];
-		if ( Q_stricmp( pszPathID, "GAMEBIN" ) == 0 )
-		{
-			V_sprintf_safe( szBinLocation, "%s" PLATFORM_DIR, pLocation );
-			pLocation = szBinLocation;
-		}
 
 		CUtlStringList vecFullLocationPaths;
-		char szAbsSearchPath[MAX_PATH];
 		V_MakeAbsolutePath( szAbsSearchPath, sizeof( szAbsSearchPath ), pLocation, pszBaseDir );
 
 		// Now resolve any ./'s.
@@ -1126,7 +973,7 @@ FSReturnCode_t LocateGameInfoFile( const CFSSteamSetupInfo &fsInfo, char *pOutDi
 ShowError:
 	return SetupFileSystemError( true, FS_MISSING_GAMEINFO_FILE, 
 		"Unable to find %s. Solutions:\n\n"
-		"1. Read https://developer.valvesoftware.com/wiki/Gameinfo.txt\n"
+		"1. Read http://www.valve-erc.com/srcsdk/faq.html#NoGameDir\n"
 		"2. Run vconfig to specify which game you're working on.\n"
 		"3. Add -game <path> on the command line where <path> is the directory that %s is in.\n",
 		GAMEINFO_FILENAME, GAMEINFO_FILENAME );
@@ -1252,13 +1099,6 @@ FSReturnCode_t FileSystem_SetBasePaths( IFileSystem *pFileSystem )
 		return SetupFileSystemError( false, FS_INVALID_PARAMETERS, "FileSystem_GetExecutableDir failed." );
 
 	pFileSystem->AddSearchPath( executablePath, "EXECUTABLE_PATH" );
-	if ( *PLATFORM_DIR )
-	{
-		char baseBinFolder[MAX_PATH];
-		Q_strncpy( baseBinFolder, executablePath, MAX_PATH );
-		baseBinFolder[ V_strlen( baseBinFolder ) - V_strlen( PLATFORM_DIR ) ] = '\0';
-		pFileSystem->AddSearchPath( baseBinFolder, "EXECUTABLE_PATH" );
-	}
 
 	if ( !FileSystem_GetBaseDir( executablePath, sizeof( executablePath ) )  )
 		return SetupFileSystemError( false, FS_INVALID_PARAMETERS, "FileSystem_GetBaseDir failed." );
@@ -1273,6 +1113,7 @@ FSReturnCode_t FileSystem_SetBasePaths( IFileSystem *pFileSystem )
 //-----------------------------------------------------------------------------
 FSReturnCode_t FileSystem_GetFileSystemDLLName( char *pFileSystemDLL, int nMaxLen, bool &bSteam )
 {
+#if 0
 	bSteam = false;
 
 	// Inside of here, we don't have a filesystem yet, so we have to assume that the filesystem_stdio or filesystem_steam
@@ -1301,6 +1142,31 @@ FSReturnCode_t FileSystem_GetFileSystemDLLName( char *pFileSystemDLL, int nMaxLe
 			bSteam = true;
 		}
 	#endif
+#else
+	char executablePath[MAX_PATH];
+	if ( !FileSystem_GetExecutableDir( executablePath, sizeof( executablePath ) )	)
+		return SetupFileSystemError( false, FS_INVALID_PARAMETERS, "FileSystem_GetExecutableDir failed." );
+
+	// Assume we'll use local files
+	Q_snprintf( pFileSystemDLL, nMaxLen, "%s%clibfilesystem_stdio" DLL_EXT_STRING, executablePath, CORRECT_PATH_SEPARATOR );
+
+	#if !defined( _X360 )
+		// Use filsystem_steam if it exists?
+		#if defined( OSX ) || defined( LINUX )
+			struct stat statBuf;
+		#endif
+		if (
+			#if defined( OSX ) || defined( LINUX )
+				stat( pFileSystemDLL, &statBuf ) != 0
+			#else
+				_access( pFileSystemDLL, 0 ) != 0
+			#endif
+		) {
+			Q_snprintf( pFileSystemDLL, nMaxLen, "%s%cfilesystem_stdio" DLL_EXT_STRING, executablePath, CORRECT_PATH_SEPARATOR );
+		}
+	#endif
+
+#endif
 
 	return FS_OK;
 }
@@ -1427,15 +1293,4 @@ void FileSystem_AddSearchPath_Platform( IFileSystem *pFileSystem, const char *sz
 	Q_strncat( platform, "/../platform", MAX_PATH, MAX_PATH );
 
 	pFileSystem->AddSearchPath( platform, "PLATFORM" );
-}
-
-bool FileSystem_AllowedSearchPath( const char *pchPath )
-{
-	if ( V_stristr( pchPath, "WebDavRedirector" ) )
-	{
-		Assert( !"Removing possibly malicious search path!" );
-		return false;
-	}
-
-	return true;
 }

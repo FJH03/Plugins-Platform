@@ -145,8 +145,8 @@ unsigned int CLZMA::Uncompress( unsigned char *pInput, unsigned char *pOutput )
 	}
 
 	// These are in/out variables
-	SizeT outProcessed = pHeader->actualSize;
-	SizeT inProcessed = pHeader->lzmaSize;
+	SizeT outProcessed = LittleLong(pHeader->actualSize);
+	SizeT inProcessed = LittleLong(pHeader->lzmaSize);
 	ELzmaStatus status;
 	SRes result = LzmaDecode( (Byte *)pOutput, &outProcessed, (Byte *)(pInput + sizeof( lzma_header_t ) ),
 	                          &inProcessed, (Byte *)pHeader->properties, LZMA_PROPS_SIZE, LZMA_FINISH_END, &status, &g_Alloc );
@@ -154,19 +154,13 @@ unsigned int CLZMA::Uncompress( unsigned char *pInput, unsigned char *pOutput )
 
 	LzmaDec_Free(&state, &g_Alloc);
 
-	if ( result != SZ_OK || pHeader->actualSize != outProcessed )
+	if ( result != SZ_OK || LittleLong(pHeader->actualSize) != outProcessed )
 	{
 		Warning( "LZMA Decompression failed (%i)\n", result );
 		return 0;
 	}
 
-	if ( outProcessed >= UINT_MAX )
-	{
-		Warning( "LZMA Decompression overflowed (%zu > %zu)\n", outProcessed, (size_t)UINT_MAX );
-		return 0;
-	}
-
-	return (int)outProcessed;
+	return outProcessed;
 }
 
 CLZMAStream::CLZMAStream()
@@ -291,16 +285,8 @@ bool CLZMAStream::Read( unsigned char *pInput, unsigned int nMaxInputBytes,
 		return false;
 	}
 
-	size_t zuNewCompressedBytesRead = ( size_t )nCompressedBytesRead + inSize;
-	size_t zuNewOutputBytesWritten  = ( size_t )nOutputBytesWritten + outSize;
-	if ( zuNewCompressedBytesRead >= UINT_MAX || zuNewOutputBytesWritten >= UINT_MAX )
-	{
-		Warning( "LZMA Decompression overflowed (read: %zu > %zu or write: %zu > %zu)\n", zuNewCompressedBytesRead, ( size_t )UINT_MAX, zuNewOutputBytesWritten, (size_t) UINT_MAX );
-		return false;
-	}
-
-	nCompressedBytesRead += (int)inSize;
-	nOutputBytesWritten += (int)outSize;
+	nCompressedBytesRead += inSize;
+	nOutputBytesWritten += outSize;
 
 	m_nCompressedBytesRead += nCompressedBytesRead;
 	m_nActualBytesRead += nOutputBytesWritten;
