@@ -124,27 +124,45 @@ IForward *g_pOnLevelInit = NULL;
 
 IGameConfig *g_pGameConf = NULL;
 
-CUtlVector<IEntityListener *> *EntListeners()
+typedef void (*AddListenerEntityFn)(void *gEntList, IEntityListener *listener);
+typedef void (*RemoveListenerEntityFn)(void *gEntList, IEntityListener *listener);
+
+static AddListenerEntityFn g_pAddListenerEntity = NULL;
+static RemoveListenerEntityFn g_pRemoveListenerEntity = NULL;
+static bool g_bLoggedEntityListenerPath = false;
+static bool g_bWarnedRemoveListenerMissing = false;
+
+static bool RegisterEntityListener(IEntityListener *listener)
 {
 	void *gEntList = gamehelpers->GetGlobalEntityList();
-	if (gEntList)
+	if (g_pAddListenerEntity && gEntList)
 	{
-		int offset = -1; /* 65572 */
-		if (g_pGameConf->GetOffset("EntityListeners", &offset))
+		if (!g_bLoggedEntityListenerPath)
 		{
-			return (CUtlVector<IEntityListener *> *)((intptr_t) gEntList + offset);
+			g_bLoggedEntityListenerPath = true;
+			g_pSM->LogMessage(myself, "Registering entity listener via AddListenerEntity signature. gEntList=%p fn=%p", gEntList, (void *)g_pAddListenerEntity);
 		}
-	}
-	else
-	{
-		void *entListeners;
-		if (g_pGameConf->GetAddress("EntityListenersPtr", &entListeners))
-		{
-			return (CUtlVector<IEntityListener *> *)entListeners;
-		}
+		g_pAddListenerEntity(gEntList, listener);
+		return true;
 	}
 
-	return NULL;
+	return false;
+}
+
+static void UnregisterEntityListener(IEntityListener *listener)
+{
+	void *gEntList = gamehelpers->GetGlobalEntityList();
+	if (g_pRemoveListenerEntity && gEntList)
+	{
+		g_pRemoveListenerEntity(gEntList, listener);
+		return;
+	}
+
+	if (!g_bWarnedRemoveListenerMissing)
+	{
+		g_bWarnedRemoveListenerMissing = true;
+		g_pSM->LogMessage(myself, "RemoveListenerEntity signature not available; skipping entity listener unregistration.");
+	}
 }
 
 
@@ -227,17 +245,27 @@ bool SDKHooks::SDK_OnLoad(char *error, size_t maxlength, bool late)
 
 	memset(m_EntityCache, INVALID_EHANDLE_INDEX, sizeof(m_EntityCache));
 
-	CUtlVector<IEntityListener *> *entListeners = EntListeners();
-	if (!entListeners)
+	void *addr = NULL;
+	if (g_pGameConf->GetMemSig("AddListenerEntity", &addr) && addr)
+		g_pAddListenerEntity = (AddListenerEntityFn)addr;
+	addr = NULL;
+	if (g_pGameConf->GetMemSig("RemoveListenerEntity", &addr) && addr)
+		g_pRemoveListenerEntity = (RemoveListenerEntityFn)addr;
+
+	if (!g_pAddListenerEntity)
 	{
-		g_pSM->Format(error, maxlength, "Failed to setup entity listeners");
+		g_pSM->Format(error, maxlength, "Failed to setup entity listeners (AddListenerEntity signature missing)");
 #if SOURCE_ENGINE != SE_MOCK
 		return false;
 #endif
 	}
-	else
+
+	if (!RegisterEntityListener(this))
 	{
-		entListeners->AddToTail(this);
+		g_pSM->Format(error, maxlength, "Failed to setup entity listeners (AddListenerEntity call failed)");
+#if SOURCE_ENGINE != SE_MOCK
+		return false;
+#endif
 	}
 
 
@@ -376,11 +404,7 @@ void SDKHooks::SDK_OnUnload()
 	sharesys->DropCapabilityProvider(myself, this, "SDKHook_DmgCustomInOTD");
 	sharesys->DropCapabilityProvider(myself, this, "SDKHook_LogicalEntSupport");
 
-	CUtlVector<IEntityListener *> *entListeners = EntListeners();
-	if (entListeners)
-	{
-		entListeners->FindAndRemove(this);
-	}
+	UnregisterEntityListener(this);
 
 	gameconfs->CloseGameConfigFile(g_pGameConf);
 }

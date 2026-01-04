@@ -12,10 +12,6 @@
 
 "Game Master"
 {
-	"common.games.txt"
-	{
-	}
-	
 	"engine.ep2v.txt"
 	{
 		"engine"	"orangebox_valve"

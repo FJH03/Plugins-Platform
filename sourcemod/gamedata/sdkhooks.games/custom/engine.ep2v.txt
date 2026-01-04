@@ -2,6 +2,22 @@
 {
 	"cstrike"
 	{
+		"Signatures"
+		{
+			"AddListenerEntity"
+			{
+				"library"   "server"
+				"windows64"  "\x48\x89\x54\x24\x10\x48\x83\xEC\x28\x4C\x8D\x91\x38\x00\x02\x00"
+				"linux64"   "@_ZN17CGlobalEntityList17AddListenerEntityEP15IEntityListener"
+			}
+			"RemoveListenerEntity"
+			{
+				"library"   "server"
+				"windows64"  "\x40\x53\x48\x83\xEC\x20\x48\x8B\xD9\x33\xC0\x8B\x89\x48\x00\x02\x00"
+				"linux64"   "@_ZN17CGlobalEntityList20RemoveListenerEntityEP15IEntityListener"
+			}
+		}
+
 		"Offsets"
 		{
 			//CBaseEntity::ShouldCollide(int, int) const
