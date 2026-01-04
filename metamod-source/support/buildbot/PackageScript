@@ -32,7 +32,7 @@ for cxx in MMS.all_targets:
             builder.AddCopy(os.path.join(builder.sourcePath, 'support', 'metamod_osx64.vdf'), 
                             os.path.join('addons', 'metamod_x64.vdf'))
 
-builder.AddCopy(os.path.join(builder.sourcePath, 'support', 'metamod.vdf'), addons_folder)
+# builder.AddCopy(os.path.join(builder.sourcePath, 'support', 'metamod.vdf'), addons_folder)
 builder.AddCopy(os.path.join(builder.sourcePath, 'support', 'metaplugins.ini'), metamod_folder)
 builder.AddCopy(os.path.join(builder.sourcePath, 'support', 'README.txt'), metamod_folder)
 
