@@ -31,6 +31,7 @@
 #include "shared/string-pool.h"
 
 namespace sp {
+namespace cc {
 
 bool assemble(CompileContext& cc, CodeGenerator& cg, const char* outname,
               int compression_level);
@@ -43,13 +44,9 @@ class Assembler
     void Assemble(sp::SmxByteBuffer* buffer);
 
   private:
-    void InitOpcodeLookup();
-
-    int FindOpcode(const char* instr, size_t maxlen);
-
-  private:
     CompileContext& cc_;
     CodeGenerator& cg_;
 };
 
+} // namespace cc
 } // namespace sp

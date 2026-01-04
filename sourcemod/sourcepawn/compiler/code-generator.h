@@ -32,10 +32,10 @@
 #include "smx-assembly-buffer.h"
 
 namespace sp {
+namespace cc {
 
 class CompileContext;
 class ParseTree;
-struct symbol;
 
 class CodeGenerator final
 {
@@ -44,10 +44,10 @@ class CodeGenerator final
 
     bool Generate();
 
-    void LinkPublicFunction(symbol* sym, uint32_t id);
+    void LinkPublicFunction(FunctionDecl* decl, uint32_t id);
 
     const tr::vector<tr::string>& debug_strings() const { return debug_strings_; }
-    const tr::vector<symbol*>& native_list() const { return native_list_; }
+    const tr::vector<FunctionDecl*>& native_list() const { return native_list_; }
 
     const uint8_t* code_ptr() const { return asm_.bytes(); }
     uint32_t code_size() const { return (uint32_t)asm_.size(); }
@@ -90,6 +90,7 @@ class CodeGenerator final
     void EmitIndexExpr(IndexExpr* expr);
     void EmitFieldAccessExpr(FieldAccessExpr* expr);
     void EmitCallExpr(CallExpr* expr);
+    void EmitNativeCallHiddenArg(CallExpr* expr);
     void EmitDefaultArgExpr(DefaultArgExpr* expr);
     void EmitCallUserOpExpr(CallUserOpExpr* expr);
     void EmitNewArrayExpr(NewArrayExpr* expr);
@@ -102,11 +103,11 @@ class CodeGenerator final
 
     void EmitDefaultArray(Expr* expr, ArgDecl* arg);
     void EmitUserOp(const UserOperation& user_op, value* lval);
-    void EmitCall(symbol* fun, cell nargs);
+    void EmitCall(FunctionDecl* fun, cell nargs);
     void EmitInc(const value* lval);
     void EmitDec(const value* lval);
-    void InvokeGetter(methodmap_method_t* method);
-    void InvokeSetter(methodmap_method_t* method, bool save);
+    void InvokeGetter(MethodmapPropertyDecl* method);
+    void InvokeSetter(MethodmapPropertyDecl* method, bool save);
     void EmitRvalue(value* lval);
     void EmitStore(const value* lval);
     void EmitBreak();
@@ -116,11 +117,13 @@ class CodeGenerator final
         EmitRvalue(&tmp);
     }
 
+    using DebugSymbol = std::pair<Decl*, uint32_t>;
+
     void AddDebugFile(const std::string& line);
     void AddDebugLine(int linenr);
-    void AddDebugSymbol(symbol* sym);
-    void AddDebugSymbols(tr::vector<symbol*>* list);
-    void EnqueueDebugSymbol(symbol* sym);
+    void AddDebugSymbol(Decl* sym, uint32_t pc);
+    void AddDebugSymbols(tr::vector<DebugSymbol>* list);
+    void EnqueueDebugSymbol(Decl* decl, uint32_t pc);
 
     // Helper that automatically handles heap deallocations.
     void EmitExprForStmt(Expr* expr);
@@ -194,13 +197,13 @@ class CodeGenerator final
     void AllocInScope(ParseNode* node, MemoryScope& scope, MemuseType type, int size);
     int PopScope(tr::vector<MemoryScope>& scope_list);
 
-    using CallGraph = tr::unordered_map<symbol*, tr::vector<symbol*>>;
+    using CallGraph = tr::unordered_map<FunctionDecl*, tr::vector<FunctionDecl*>>;
 
     bool ComputeStackUsage();
     bool ComputeStackUsage(CallGraph::iterator caller_iter);
 
   private:
-    typedef tr::vector<tr::vector<symbol*>> SymbolStack;
+    typedef tr::vector<tr::vector<DebugSymbol>> SymbolStack;
 
     class AutoEnterScope {
       public:
@@ -216,20 +219,20 @@ class CodeGenerator final
   private:
     CompileContext& cc_;
     ParseTree* tree_;
-    symbol* func_ = nullptr;
+    FunctionDecl* fun_ = nullptr;
     int max_script_memory_ = 0;
 
     tr::vector<tr::string> debug_strings_;
-    tr::vector<symbol*> native_list_;
-    sp::SmxAssemblyBuffer asm_;
+    tr::vector<FunctionDecl*> native_list_;
+    SmxAssemblyBuffer asm_;
     DataQueue data_;
 
     ke::Maybe<uint32_t> last_break_op_;
     tr::vector<MemoryScope> stack_scopes_;
     tr::vector<MemoryScope> heap_scopes_;
     SymbolStack local_syms_;
-    tr::vector<symbol*> global_syms_;
-    tr::vector<std::pair<SymbolScope*, tr::vector<symbol*>>> static_syms_;
+    tr::vector<DebugSymbol> global_syms_;
+    tr::vector<std::pair<SymbolScope*, tr::vector<DebugSymbol>>> static_syms_;
     tr::unordered_set<SymbolScope*> static_scopes_;
 
     // Loop handling.
@@ -249,4 +252,5 @@ class CodeGenerator final
     AutoCountErrors errors_;
 };
 
+} // namespace cc
 } // namespace sp

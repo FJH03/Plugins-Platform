@@ -29,6 +29,7 @@
 #include "parse-node.h"
 
 namespace sp {
+namespace cc {
 
 class AutoCreateScope;
 class Semantics;
@@ -45,12 +46,11 @@ class SemaContext
         cc_.set_sema(this);
         scope_ = cc_.globals();
     }
-    SemaContext(SemaContext& parent, symbol* func, FunctionDecl* func_node)
+    SemaContext(SemaContext& parent, FunctionDecl* func)
       : cc_(parent.cc_),
         sema_(parent.sema()),
         scope_(parent.scope_),
         func_(func),
-        func_node_(func_node),
         preprocessing_(parent.preprocessing())
     {
         cc_prev_sc_ = cc_.sema();
@@ -65,7 +65,7 @@ class SemaContext
 
     bool BindType(const token_pos_t& pos, TypenameInfo* ti);
     bool BindType(const token_pos_t& pos, typeinfo_t* ti);
-    bool BindType(const token_pos_t& pos, Atom* atom, bool is_label, int* tag);
+    bool BindType(const token_pos_t& pos, Atom* atom, bool is_label, Type** type);
 
     Stmt* void_return() const { return void_return_; }
     void set_void_return(Stmt* stmt) { void_return_ = stmt; }
@@ -101,8 +101,7 @@ class SemaContext
     bool warned_unreachable() const { return warned_unreachable_; }
     void set_warned_unreachable() { warned_unreachable_ = true; }
 
-    symbol* func() const { return func_; }
-    FunctionDecl* func_node() const { return func_node_; }
+    FunctionDecl* func() const { return func_; }
     Semantics* sema() const { return sema_; }
 
     SymbolScope* ScopeForAdd();
@@ -125,8 +124,7 @@ class SemaContext
     Semantics* sema_ = nullptr;
     SymbolScope* scope_ = nullptr;
     AutoCreateScope* scope_creator_ = nullptr;
-    symbol* func_ = nullptr;
-    FunctionDecl* func_node_ = nullptr;
+    FunctionDecl* func_ = nullptr;
     Stmt* void_return_ = nullptr;
     bool warned_mixed_returns_ = false;
     bool returns_value_ = false;
@@ -142,10 +140,10 @@ class SemaContext
 
 class Semantics final
 {
-    friend class ArraySizeResolver;
+    friend class ArrayTypeResolver;
+    friend class ArrayValidator;
     friend class ConstDecl;
     friend class EnumDecl;
-    friend class FixedArrayValidator;
     friend class FunctionDecl;
     friend class Parser;
 
@@ -185,15 +183,16 @@ class Semantics final
     bool CheckAssertStmt(AssertStmt* stmt);
     bool CheckStaticAssertStmt(StaticAssertStmt* stmt);
     bool CheckReturnStmt(ReturnStmt* stmt);
-    bool CheckArrayReturnStmt(ReturnStmt* stmt);
+    bool CheckCompoundReturnStmt(ReturnStmt* stmt);
+    bool CheckNativeCompoundReturn(FunctionDecl* info);
     bool CheckExprStmt(ExprStmt* stmt);
     bool CheckIfStmt(IfStmt* stmt);
     bool CheckConstDecl(ConstDecl* decl);
     bool CheckVarDecl(VarDeclBase* decl);
     bool CheckConstDecl(VarDecl* decl);
     bool CheckPstructDecl(VarDeclBase* decl);
-    bool CheckPstructArg(VarDeclBase* decl, const pstruct_t* ps,
-                         const StructInitFieldExpr* field, std::vector<bool>* visited);
+    bool CheckPstructArg(VarDeclBase* decl, PstructDecl* ps, StructInitFieldExpr* field,
+                         std::vector<bool>* visited);
 
     // Expressions.
     bool CheckExpr(Expr* expr);
@@ -217,8 +216,10 @@ class Semantics final
     bool CheckUnaryExpr(UnaryExpr* expr);
     bool CheckFieldAccessExpr(FieldAccessExpr* expr, bool from_call);
     bool CheckStaticFieldAccessExpr(FieldAccessExpr* expr);
-    bool CheckEnumStructFieldAccessExpr(FieldAccessExpr* expr, Type* type, symbol* root,
+    bool CheckEnumStructFieldAccessExpr(FieldAccessExpr* expr, Type* type, EnumStructDecl* root,
                                         bool from_call);
+    bool CheckRvalue(Expr* expr);
+    bool CheckRvalue(const token_pos_t& pos, const value& val);
 
     bool CheckAssignmentLHS(BinaryExpr* expr);
     bool CheckAssignmentRHS(BinaryExpr* expr);
@@ -229,31 +230,40 @@ class Semantics final
     };
 
     bool CheckArrayDeclaration(VarDeclBase* decl);
-    bool CheckExprForArrayInitializer(Expr* expr);
     bool CheckNewArrayExprForArrayInitializer(NewArrayExpr* expr);
-    bool CheckArgument(CallExpr* call, ArgDecl* arg, Expr* expr,
-                       ParamState* ps, unsigned int argpos);
+    Expr* CheckArgument(CallExpr* call, ArgDecl* arg, Expr* expr,
+                        ParamState* ps, unsigned int argpos);
     bool CheckWrappedExpr(Expr* outer, Expr* inner);
-    symbol* BindNewTarget(Expr* target);
-    symbol* BindCallTarget(CallExpr* call, Expr* target);
+    FunctionDecl* BindNewTarget(Expr* target);
+    FunctionDecl* BindCallTarget(CallExpr* call, Expr* target);
 
     void NeedsHeapAlloc(Expr* expr);
     void AssignHeapOwnership(ParseNode* node);
 
     Expr* AnalyzeForTest(Expr* expr);
 
-    bool TestSymbol(symbol* sym, bool testconst);
+    void DeduceLiveness();
+    void DeduceMaybeUsed();
+    bool TestSymbol(Decl* sym, bool testconst);
     bool TestSymbols(SymbolScope* scope, bool testconst);
 
     void CheckVoidDecl(const typeinfo_t* type, int variable);
     void CheckVoidDecl(const declinfo_t* decl, int variable);
 
+    bool CheckScalarType(Expr* expr);
+    bool IsThisAtom(sp::Atom* atom);
+
+    bool IsIncluded(Decl* expr);
+    bool IsIncludedStock(VarDeclBase* expr);
+
   private:
     CompileContext& cc_;
-    TypeDictionary* types_ = nullptr;
+    TypeManager* types_ = nullptr;
     tr::unordered_set<SymbolScope*> static_scopes_;
+    tr::vector<FunctionDecl*> maybe_used_;
     SemaContext* sc_ = nullptr;
     bool pending_heap_allocation_ = false;
+    sp::Atom* this_atom_ = nullptr;
 };
 
 class AutoEnterScope final
@@ -303,13 +313,14 @@ class AutoCollectSemaFlow final
     bool old_value_;
 };
 
-void ReportFunctionReturnError(symbol* sym);
+void ReportFunctionReturnError(FunctionDecl* decl);
 bool TestSymbols(SymbolScope* root, int testconst);
 void check_void_decl(const typeinfo_t* type, int variable);
 void check_void_decl(const declinfo_t* decl, int variable);
-int check_operatortag(int opertok, int resulttag, const char* opername);
+bool check_operatortag(int opertok, Type* result_type, const char* opername);
 int argcompare(ArgDecl* a1, ArgDecl* a2);
 void fill_arg_defvalue(CompileContext& cc, ArgDecl* decl);
-bool IsLegacyEnumTag(SymbolScope* scope, int tag);
+bool IsLegacyEnumType(SymbolScope* scope, Type* type);
 
+} // namespace cc
 } // namespace sp

@@ -43,44 +43,29 @@
 #include "compile-options.h"
 #include "errors.h"
 #include "lexer.h"
+#include "parse-node.h"
 #include "sc.h"
 #include "scopes.h"
 #include "sctracker.h"
 #include "symbols.h"
 #include "types.h"
 
+namespace sp {
+namespace cc {
+
 using namespace SourcePawn;
 using namespace ke;
 
-namespace sp {
-
-static int
-sort_by_name(const void* a1, const void* a2)
-{
-    symbol* s1 = *(symbol**)a1;
-    symbol* s2 = *(symbol**)a2;
-    return strcmp(s1->name(), s2->name());
-}
-
 struct function_entry {
-    function_entry() : sym(nullptr)
-    {}
+    function_entry() {}
 
-    function_entry(function_entry&& other)
-      : sym(other.sym),
-        name(std::move(other.name))
-    {}
-
-    function_entry& operator =(function_entry&& other) {
-        sym = other.sym;
-        name = std::move(other.name);
-        return *this;
-    }
+    function_entry(function_entry&& other) = default;
+    function_entry& operator =(function_entry&& other) = default;
 
     function_entry(const function_entry& other) = delete;
     function_entry& operator =(const function_entry& other) = delete;
 
-    symbol* sym;
+    FunctionDecl* decl = nullptr;
     std::string name;
 };
 
@@ -132,21 +117,14 @@ typedef SmxBlobSection<sp_fdbg_info_t> SmxDebugInfoSection;
 typedef SmxListSection<sp_fdbg_line_t> SmxDebugLineSection;
 typedef SmxListSection<sp_fdbg_file_t> SmxDebugFileSection;
 
-struct variable_type_t {
-    int tag;
-    const int* dims;
-    int dimcount;
-    bool is_const;
-};
-
 class RttiBuilder
 {
   public:
     RttiBuilder(CompileContext& cc, CodeGenerator& cg, SmxNameTable* names);
 
     void finish(SmxBuilder& builder);
-    void add_method(symbol* sym);
-    void add_native(symbol* sym);
+    void add_method(FunctionDecl* fun);
+    void add_native(FunctionDecl* sym);
 
   private:
     uint32_t add_enum(Type* type);
@@ -154,28 +132,30 @@ class RttiBuilder
     uint32_t add_typeset(Type* type, funcenum_t* fe);
     uint32_t add_struct(Type* type);
     uint32_t add_enumstruct(Type* type);
-    uint32_t encode_signature(symbol* sym);
-    void encode_signature_into(std::vector<uint8_t>& bytes, functag_t* ft);
+    uint32_t encode_signature(FunctionDecl* decl);
+    void encode_signature_into(std::vector<uint8_t>& bytes, FunctionType* ft);
     void encode_enum_into(std::vector<uint8_t>& bytes, Type* type);
-    void encode_tag_into(std::vector<uint8_t>& bytes, int tag);
-    void encode_ret_array_into(std::vector<uint8_t>& bytes, symbol* sym);
+    void encode_type_into(std::vector<uint8_t>& bytes, Type* type);
+    void encode_type_into(std::vector<uint8_t>& bytes, QualType type);
     void encode_funcenum_into(std::vector<uint8_t>& bytes, Type* type, funcenum_t* fe);
-    void encode_var_type(std::vector<uint8_t>& bytes, const variable_type_t& info);
     void encode_struct_into(std::vector<uint8_t>& bytes, Type* type);
     void encode_enumstruct_into(std::vector<uint8_t>& bytes, Type* type);
 
-    uint32_t to_typeid(const std::vector<uint8_t>& bytes);
+    uint32_t to_typeid(QualType type);
+    uint32_t to_typeid(Type* type) {
+        return to_typeid(QualType(type));
+    }
 
     void add_debug_var(SmxRttiTable<smx_rtti_debug_var>* table, DebugString& str);
     void add_debug_line(DebugString& str);
     void build_debuginfo();
 
-    uint8_t TagToRttiBytecode(int tag);
+    uint8_t TypeToRttiBytecode(Type* type);
 
   private:
     CompileContext& cc_;
     CodeGenerator& cg_;
-    TypeDictionary* types_ = nullptr;
+    TypeManager* types_ = nullptr;
     RefPtr<SmxNameTable> names_;
     DataPool type_pool_;
     RefPtr<SmxBlobSection<void>> data_;
@@ -336,7 +316,7 @@ void
 RttiBuilder::add_debug_var(SmxRttiTable<smx_rtti_debug_var>* table, DebugString& str)
 {
     int address = str.parse();
-    int tag = str.parse();
+    Type* type = cc_.types()->Get(str.parse());
     str.skipspaces();
     str.expect(':');
     const char* name_start = str.skipspaces();
@@ -352,33 +332,8 @@ RttiBuilder::add_debug_var(SmxRttiTable<smx_rtti_debug_var>* table, DebugString&
 
     str.skipspaces();
 
-    std::vector<int> dims;
-    int last_tag = 0;
-    if (str.getc() == '[') {
-        for (const char* ptr = str.skipspaces(); *ptr != ']'; ptr = str.skipspaces()) {
-            last_tag = str.parse();
-            str.skipspaces();
-            str.expect(':');
-            dims.emplace_back(str.parse());
-        }
-    }
-
-    // Rewrite enum structs to look less like arrays.
-    if (types_->find(last_tag)->asEnumStruct()) {
-        dims.pop_back();
-        tag = last_tag;
-    }
-
     // Encode the type.
-    uint32_t type_id;
-    {
-        auto dimptr = dims.empty() ? nullptr : &dims[0];
-        variable_type_t type = {tag, dimptr, (int)dims.size(), is_const};
-        std::vector<uint8_t> encoding;
-        encode_var_type(encoding, type);
-
-        type_id = to_typeid(encoding);
-    }
+    uint32_t type_id = to_typeid(QualType(type, is_const));
 
     smx_rtti_debug_var& var = table->add();
     var.address = address;
@@ -405,26 +360,24 @@ RttiBuilder::add_debug_var(SmxRttiTable<smx_rtti_debug_var>* table, DebugString&
     var.type_id = type_id;
 }
 
-void
-RttiBuilder::add_method(symbol* sym)
-{
-    assert(!sym->unused());
+void RttiBuilder::add_method(FunctionDecl* fun) {
+    assert(fun->is_live());
 
     uint32_t index = methods_->count();
     smx_rtti_method& method = methods_->add();
-    method.name = names_->add(sym->nameAtom());
-    method.pcode_start = sym->addr();
-    method.pcode_end = sym->codeaddr;
-    method.signature = encode_signature(sym);
+    method.name = names_->add(fun->name());
+    method.pcode_start = fun->cg()->label.offset();
+    method.pcode_end = fun->cg()->pcode_end;
+    method.signature = encode_signature(fun->canonical());
 
-    if (!sym->function()->dbgstrs)
+    if (!fun->cg()->dbgstrs)
         return;
 
     smx_rtti_debug_method debug;
     debug.method_index = index;
     debug.first_local = dbg_locals_->count();
 
-    for (auto& iter : *sym->function()->dbgstrs) {
+    for (auto& iter : *fun->cg()->dbgstrs) {
         const char* chars = iter.c_str();
         if (chars[0] == '\0')
             continue;
@@ -441,12 +394,10 @@ RttiBuilder::add_method(symbol* sym)
         dbg_methods_->add(debug);
 }
 
-void
-RttiBuilder::add_native(symbol* sym)
-{
+void RttiBuilder::add_native(FunctionDecl* fun) {
     smx_rtti_native& native = natives_->add();
-    native.name = names_->add(sym->nameAtom());
-    native.signature = encode_signature(sym);
+    native.name = names_->add(fun->name());
+    native.signature = encode_signature(fun);
 }
 
 uint32_t
@@ -456,38 +407,30 @@ RttiBuilder::add_enumstruct(Type* type)
     if (p.found())
         return p->value;
 
-    symbol* sym = type->asEnumStruct();
+    auto es_decl = type->asEnumStruct();
     uint32_t es_index = enumstructs_->count();
     typeid_cache_.add(p, type, es_index);
 
     smx_rtti_enumstruct es = {};
-    es.name = names_->add(*cc_.atoms(), type->name());
+    es.name = names_->add(*cc_.atoms(), type->declName());
     es.first_field = es_fields_->count();
-    es.size = sym->addr();
+    es.size = es_decl->array_size();
     enumstructs_->add(es);
 
     // Pre-allocate storage in case of nested types.
-    auto& enumlist = sym->data()->asEnumStruct()->fields;
+    const auto& enumlist = es_decl->fields();
     for (auto iter = enumlist.begin(); iter != enumlist.end(); iter++)
         es_fields_->add() = smx_rtti_es_field{};
 
     // Add all fields.
     size_t index = 0;
     for (auto iter = enumlist.begin(); iter != enumlist.end(); iter++) {
-        auto field = *iter;
-
-        int dims[1], dimcount = 0;
-        if (field->dim_count())
-            dims[dimcount++] = field->dim(0);
-
-        variable_type_t type = {field->semantic_tag, dims, dimcount, false};
-        std::vector<uint8_t> encoding;
-        encode_var_type(encoding, type);
+        auto field = (*iter);
 
         smx_rtti_es_field info;
-        info.name = names_->add(field->nameAtom());
-        info.type_id = to_typeid(encoding);
-        info.offset = field->addr();
+        info.name = names_->add(field->name());
+        info.type_id = to_typeid(field->type());
+        info.offset = field->offset();
         es_fields_->at(es.first_field + index) = info;
         index++;
     }
@@ -505,7 +448,7 @@ RttiBuilder::add_struct(Type* type)
     uint32_t struct_index = classdefs_->count();
     typeid_cache_.add(p, type, struct_index);
 
-    pstruct_t* ps = type->as<pstruct_t>();
+    auto ps = type->asPstruct();
 
     smx_rtti_classdef classdef;
     memset(&classdef, 0, sizeof(classdef));
@@ -515,31 +458,25 @@ RttiBuilder::add_struct(Type* type)
     classdefs_->add(classdef);
 
     // Pre-reserve space in case we recursively add structs.
-    for (size_t i = 0; i < ps->args.size(); i++)
+    for (size_t i = 0; i < ps->fields().size(); i++)
         fields_->add();
 
-    for (size_t i = 0; i < ps->args.size(); i++) {
-        const structarg_t* arg = ps->args[i];
-
-        int dims[1] = {0};
-        int dimcount = arg->type.ident == iREFARRAY ? 1 : 0;
-
-        variable_type_t type = {arg->type.tag(), dims, dimcount, !!arg->type.is_const};
-        std::vector<uint8_t> encoding;
-        encode_var_type(encoding, type);
+    for (size_t i = 0; i < ps->fields().size(); i++) {
+        auto arg = ps->fields()[i];
 
         smx_rtti_field field;
         field.flags = 0;
-        field.name = names_->add(arg->name);
-        field.type_id = to_typeid(encoding);
+        field.name = names_->add(arg->name());
+        field.type_id = to_typeid(QualType(arg->type(), arg->type_info().is_const));
         fields_->at(classdef.first_field + i) = field;
     }
     return struct_index;
 }
 
-uint32_t
-RttiBuilder::to_typeid(const std::vector<uint8_t>& bytes)
-{
+uint32_t RttiBuilder::to_typeid(QualType type) {
+    std::vector<uint8_t> bytes;
+    encode_type_into(bytes, type);
+
     if (bytes.size() <= 4) {
         uint32_t payload = 0;
         for (size_t i = 0; i < bytes.size(); i++)
@@ -552,53 +489,23 @@ RttiBuilder::to_typeid(const std::vector<uint8_t>& bytes)
     return MakeTypeId(offset, kTypeId_Complex);
 }
 
-uint32_t
-RttiBuilder::encode_signature(symbol* sym)
-{
+uint32_t RttiBuilder::encode_signature(FunctionDecl* fun) {
+    assert(fun == fun->canonical());
+
     std::vector<uint8_t> bytes;
 
-    uint32_t argc = 0;
-    bool is_variadic = false;
-    for (const auto& arg : sym->function()->node->args()) {
-        if (arg->type().ident == iVARARGS)
-            is_variadic = true;
-        argc++;
-    }
+    uint32_t argc = fun->args().size();
     if (argc > UCHAR_MAX)
         report(45);
 
     bytes.push_back((uint8_t)argc);
-    if (is_variadic)
-        bytes.push_back(cb::kVariadic);
+    if (fun->IsVariadic())
+        bytes.push_back(cb::kLegacyVariadic);
 
-    symbol* child = sym->array_return();
-    if (child && child->dim_count()) {
-        encode_ret_array_into(bytes, child);
-    } else if (sym->tag == types_->tag_void()) {
-        bytes.push_back(cb::kVoid);
-    } else {
-        encode_tag_into(bytes, sym->tag);
-    }
+    encode_type_into(bytes, fun->return_type());
 
-    for (const auto& arg : sym->function()->node->args()) {
-        int tag = arg->type().tag();
-        int numdim = arg->type().numdim();
-        if (arg->type().numdim() && arg->type().enum_struct_tag()) {
-            int last_tag = arg->type().enum_struct_tag();
-            Type* last_type = types_->find(last_tag);
-            if (last_type->isEnumStruct()) {
-                tag = last_tag;
-                numdim--;
-            }
-        }
-
-        if (arg->type().ident == iREFERENCE)
-            bytes.push_back(cb::kByRef);
-
-        auto dim = numdim ? &arg->type().dim[0] : nullptr;
-        variable_type_t info = {tag, dim, numdim, arg->type().is_const};
-        encode_var_type(bytes, info);
-    }
+    for (const auto& arg : fun->args())
+        encode_type_into(bytes, QualType(arg->type(), arg->type_info().is_const));
 
     return type_pool_.add(bytes);
 }
@@ -615,7 +522,7 @@ RttiBuilder::add_enum(Type* type)
 
     smx_rtti_enum entry;
     memset(&entry, 0, sizeof(entry));
-    entry.name = names_->add(*cc_.atoms(), type->name());
+    entry.name = names_->add(*cc_.atoms(), type->declName());
     enums_->add(entry);
     return index;
 }
@@ -637,7 +544,7 @@ RttiBuilder::add_funcenum(Type* type, funcenum_t* fe)
     uint32_t signature = type_pool_.add(bytes);
 
     smx_rtti_typedef& def = typedefs_->at(index);
-    def.name = names_->add(*cc_.atoms(), type->name());
+    def.name = names_->add(*cc_.atoms(), type->declName());
     def.type_id = MakeTypeId(signature, kTypeId_Complex);
     return index;
 }
@@ -662,7 +569,7 @@ RttiBuilder::add_typeset(Type* type, funcenum_t* fe)
         encode_signature_into(bytes, iter);
 
     smx_rtti_typeset& entry = typesets_->at(index);
-    entry.name = names_->add(*cc_.atoms(), type->name());
+    entry.name = names_->add(*cc_.atoms(), type->declName());
     entry.signature = type_pool_.add(bytes);
     return index;
 }
@@ -688,44 +595,57 @@ RttiBuilder::encode_enumstruct_into(std::vector<uint8_t>& bytes, Type* type)
     CompactEncodeUint32(bytes, add_enumstruct(type));
 }
 
-void
-RttiBuilder::encode_ret_array_into(std::vector<uint8_t>& bytes, symbol* sym)
-{
-    for (int i = 0; i < sym->dim_count(); i++) {
-        bytes.push_back(cb::kFixedArray);
-        CompactEncodeUint32(bytes, sym->dim(i));
-    }
-    encode_tag_into(bytes, sym->tag);
-}
-
-uint8_t
-RttiBuilder::TagToRttiBytecode(int tag)
-{
-    if (tag == types_->tag_bool())
+uint8_t RttiBuilder::TypeToRttiBytecode(Type* type) {
+    if (type->isBool())
         return cb::kBool;
-    if (tag == types_->tag_any())
+    if (type->isAny())
         return cb::kAny;
-    if (tag == types_->tag_string())
+    if (type->isChar())
         return cb::kChar8;
-    if (tag == types_->tag_float())
+    if (type->isFloat())
         return cb::kFloat32;
-    if (tag == 0)
+    if (type->isInt())
         return cb::kInt32;
+    if (type->isVoid())
+        return cb::kVoid;
     return 0;
 }
 
-void
-RttiBuilder::encode_tag_into(std::vector<uint8_t>& bytes, int tag)
-{
-    if (uint8_t b = TagToRttiBytecode(tag)) {
+void RttiBuilder::encode_type_into(std::vector<uint8_t>& bytes, Type* type) {
+    encode_type_into(bytes, QualType(type));
+}
+
+void RttiBuilder::encode_type_into(std::vector<uint8_t>& bytes, QualType qt) {
+    if (qt.is_const())
+        bytes.emplace_back(cb::kConst);
+
+    Type* type = *qt;
+    if (auto array = type->as<ArrayType>()) {
+        for (;;) {
+            if (array->size()) {
+                bytes.emplace_back(cb::kFixedArray);
+                CompactEncodeUint32(bytes, array->size());
+            } else {
+                bytes.emplace_back(cb::kArray);
+            }
+            if (!array->inner()->isArray())
+                break;
+            array = array->inner()->to<ArrayType>();
+        }
+        type = array->inner();
+    } else if (type->isReference()) {
+        bytes.emplace_back(cb::kByRef);
+        type = type->inner();
+    }
+
+    if (uint8_t b = TypeToRttiBytecode(type)) {
         bytes.push_back(b);
         return;
     }
 
-    Type* type = types_->find(tag);
     assert(!type->isObject());
 
-    if (type->isStruct()) {
+    if (type->isPstruct()) {
         encode_struct_into(bytes, type);
         return;
     }
@@ -760,45 +680,17 @@ RttiBuilder::encode_funcenum_into(std::vector<uint8_t>& bytes, Type* type, funce
     }
 }
 
-void
-RttiBuilder::encode_signature_into(std::vector<uint8_t>& bytes, functag_t* ft)
-{
+void RttiBuilder::encode_signature_into(std::vector<uint8_t>& bytes, FunctionType* ft) {
     bytes.push_back(cb::kFunction);
-    bytes.push_back((uint8_t)ft->args.size());
-    if (!ft->args.empty() && ft->args[ft->args.size() - 1].type.ident == iVARARGS)
-        bytes.push_back(cb::kVariadic);
-    if (ft->ret_tag == types_->tag_void())
-        bytes.push_back(cb::kVoid);
-    else
-        encode_tag_into(bytes, ft->ret_tag);
+    bytes.push_back((uint8_t)ft->nargs());
 
-    for (const auto& arg : ft->args) {
-        if (arg.type.ident == iREFERENCE)
-            bytes.push_back(cb::kByRef);
+    if (ft->variadic())
+        bytes.push_back(cb::kLegacyVariadic);
 
-        auto dims = arg.type.dim.empty() ? nullptr : &arg.type.dim[0];
-        variable_type_t info = {arg.type.tag(), dims, arg.type.numdim(), arg.type.is_const};
-        encode_var_type(bytes, info);
-    }
-}
+    encode_type_into(bytes, ft->return_type());
 
-void
-RttiBuilder::encode_var_type(std::vector<uint8_t>& bytes, const variable_type_t& info)
-{
-    for (int i = 0; i < info.dimcount; i++) {
-        if (info.dims[i] == 0) {
-            bytes.push_back(cb::kArray);
-        } else {
-            bytes.push_back(cb::kFixedArray);
-            CompactEncodeUint32(bytes, info.dims[i]);
-        }
-
-        if (i != info.dimcount - 1 && info.is_const)
-            bytes.push_back(cb::kConst);
-    }
-    if (info.is_const)
-        bytes.push_back(cb::kConst);
-    encode_tag_into(bytes, info.tag);
+    for (size_t i = 0; i < ft->nargs(); i++)
+        encode_type_into(bytes, ft->arg_type(i));
 }
 
 typedef SmxListSection<sp_file_natives_t> SmxNativeSection;
@@ -827,51 +719,58 @@ Assembler::Assemble(SmxByteBuffer* buffer)
     RttiBuilder rtti(cc_, cg_, names);
 
     std::vector<function_entry> functions;
-    std::unordered_set<symbol*> symbols;
+    std::unordered_set<Decl*> symbols;
 
     // Sort globals.
-    std::vector<symbol*> global_symbols;
-    cc_.globals()->ForEachSymbol([&](symbol* sym) -> void {
-        global_symbols.push_back(sym);
+    std::vector<Decl*> global_symbols;
+    cc_.globals()->ForEachSymbol([&](Decl* decl) -> void {
+        global_symbols.push_back(decl);
 
         // This is only to assert that we embedded pointers properly in the assembly buffer.
-        symbols.emplace(sym);
+        symbols.emplace(decl);
     });
-    for (const auto& sym : cc_.functions()) {
-        if (symbols.count(sym))
+    for (const auto& decl : cc_.functions()) {
+        if (symbols.count(decl))
             continue;
-        global_symbols.push_back(sym);
-        symbols.emplace(sym);
+        if (decl->canonical() != decl)
+            continue;
+        global_symbols.push_back(decl);
+        symbols.emplace(decl);
     }
 
-    qsort(global_symbols.data(), global_symbols.size(), sizeof(symbol*), sort_by_name);
+    std::sort(global_symbols.begin(), global_symbols.end(),
+              [](const Decl* a, const Decl *b) -> bool {
+        return a->name()->str() < b->name()->str();
+    });
 
     // Build the easy symbol tables.
-    for (const auto& sym : global_symbols) {
-        if (sym->ident == iFUNCTN) {
-            if (sym->native)
+    for (const auto& decl : global_symbols) {
+        if (auto fun = decl->as<FunctionDecl>()) {
+            if (fun->is_native())
                 continue;
 
-            if (!sym->defined)
+            if (!fun->body())
                 continue;
-            if (sym->unused())
+            if (!fun->is_live())
+                continue;
+            if (fun->canonical() != fun)
                 continue;
 
             function_entry entry;
-            entry.sym = sym;
-            if (sym->is_public) {
-                entry.name = sym->name();
+            entry.decl = fun;
+            if (fun->is_public()) {
+                entry.name = fun->name()->str();
             } else {
                 // Create a private name.
-                entry.name = ke::StringPrintf(".%d.%s", sym->addr(), sym->name());
+                entry.name = ke::StringPrintf(".%d.%s", fun->cg()->label.offset(), fun->name()->chars());
             }
 
             functions.emplace_back(std::move(entry));
-        } else if (sym->ident == iVARIABLE || sym->ident == iARRAY || sym->ident == iREFARRAY) {
-            if (sym->is_public || (sym->usage & (uREAD | uWRITTEN)) != 0) {
+        } else if (auto var = decl->as<VarDecl>()) {
+            if (var->is_public() || (var->is_used() && !var->as<ConstDecl>())) {
                 sp_file_pubvars_t& pubvar = pubvars->add();
-                pubvar.address = sym->addr();
-                pubvar.name = names->add(sym->nameAtom());
+                pubvar.address = var->addr();
+                pubvar.name = names->add(var->name());
             }
         }
     }
@@ -883,31 +782,30 @@ Assembler::Assemble(SmxByteBuffer* buffer)
     });
     for (size_t i = 0; i < functions.size(); i++) {
         function_entry& f = functions[i];
-        symbol* sym = f.sym;
 
-        assert(sym->addr() > 0);
-        assert(sym->defined);
-        assert(sym->codeaddr > sym->addr());
+        assert(f.decl->cg()->label.offset() > 0);
+        assert(f.decl->impl());
+        assert(f.decl->cg()->pcode_end > f.decl->cg()->label.offset());
 
         sp_file_publics_t& pubfunc = publics->add();
-        pubfunc.address = sym->addr();
+        pubfunc.address = f.decl->cg()->label.offset();
         pubfunc.name = names->add(*cc_.atoms(), f.name.c_str());
 
         auto id = (uint32_t(i) << 1) | 1;
         if (!Label::ValueFits(id))
             report(421);
-        cg_.LinkPublicFunction(sym, id);
+        cg_.LinkPublicFunction(f.decl, id);
 
-        rtti.add_method(sym);
+        rtti.add_method(f.decl);
     }
 
     // Populate the native table.
     for (size_t i = 0; i < cg_.native_list().size(); i++) {
-        symbol* sym = cg_.native_list()[i];
-        assert(size_t(sym->addr()) == i);
+        FunctionDecl* sym = cg_.native_list()[i];
+        assert(size_t(sym->cg()->label.offset()) == i);
 
         sp_file_natives_t& entry = natives->add();
-        entry.name = names->add(sym->nameAtom());
+        entry.name = names->add(sym->name());
 
         rtti.add_native(sym);
     }
@@ -1037,4 +935,5 @@ assemble(CompileContext& cc, CodeGenerator& cg, const char* binfname, int compre
     return splat_to_binary(cc, binfname, buffer.bytes(), buffer.size());
 }
 
+} // namespace cc
 } // namespace sp

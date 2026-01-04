@@ -27,7 +27,9 @@
     FOR_EACH(StaticAssertStmt) \
     FOR_EACH(VarDecl) \
     FOR_EACH(ArgDecl) \
+    FOR_EACH(ConstDecl) \
     FOR_EACH(EnumDecl) \
+    FOR_EACH(EnumFieldDecl) \
     FOR_EACH(PstructDecl) \
     FOR_EACH(TypedefDecl) \
     FOR_EACH(TypesetDecl) \
@@ -42,9 +44,13 @@
     FOR_EACH(SwitchStmt) \
     FOR_EACH(PragmaUnusedStmt) \
     FOR_EACH(FunctionDecl) \
+    FOR_EACH(MemberFunctionDecl) \
     FOR_EACH(EnumStructDecl) \
+    FOR_EACH(LayoutFieldDecl) \
     FOR_EACH(MethodmapDecl) \
-    FOR_EACH(ChangeScopeNode)
+    FOR_EACH(ChangeScopeNode) \
+    FOR_EACH(MethodmapPropertyDecl) \
+    FOR_EACH(MethodmapMethodDecl)
 
 #define AST_EXPR_TYPE_LIST(FOR_EACH) \
     FOR_EACH(UnaryExpr) \

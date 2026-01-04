@@ -35,14 +35,16 @@
 #include "stl/stl-vector.h"
 
 namespace sp {
+namespace cc {
 
+class Decl;
+class FunctionDecl;
 class Lexer;
 class ReportManager;
 class SemaContext;
 class SymbolScope;
-class TypeDictionary;
+class TypeManager;
 struct CompileOptions;
-struct symbol;
 
 // The thread-safe successor to scvars.
 class CompileContext final
@@ -63,13 +65,13 @@ class CompileContext final
     void TrackFree(size_t bytes);
 
     SymbolScope* globals() const { return globals_; }
-    tr::unordered_set<symbol*>& functions() { return functions_; }
-    tr::unordered_set<symbol*>& publics() { return publics_; }
+    tr::unordered_set<FunctionDecl*>& functions() { return functions_; }
+    tr::unordered_set<FunctionDecl*>& publics() { return publics_; }
     const std::shared_ptr<Lexer>& lexer() const { return lexer_; }
     ReportManager* reports() const { return reports_.get(); }
     CompileOptions* options() const { return options_.get(); }
     SourceManager* sources() const { return sources_.get(); }
-    TypeDictionary* types() const { return types_.get(); }
+    TypeManager* types() const { return types_.get(); }
     StringPool* atoms() { return &atoms_; }
 
     Atom* atom(const std::string& str) {
@@ -126,20 +128,20 @@ class CompileContext final
 
     DefaultArrayData* NewDefaultArrayData();
     tr::vector<tr::string>* NewDebugStringList();
-    tr::unordered_map<Atom*, symbol*>* NewSymbolMap();
+    tr::unordered_map<Atom*, Decl*>* NewSymbolMap();
 
   private:
     cc::PoolAllocator allocator_;
     SymbolScope* globals_;
     std::string default_include_;
-    tr::unordered_set<symbol*> functions_;
-    tr::unordered_set<symbol*> publics_;
+    tr::unordered_set<FunctionDecl*> functions_;
+    tr::unordered_set<FunctionDecl*> publics_;
     std::unique_ptr<CompileOptions> options_;
     std::string outfname_;
     std::string errfname_;
     std::unique_ptr<SourceManager> sources_;
     std::shared_ptr<SourceFile> inpf_org_;
-    std::unique_ptr<TypeDictionary> types_;
+    std::unique_ptr<TypeManager> types_;
     StringPool atoms_;
 
     // The lexer is in CompileContext rather than Parser until we can eliminate
@@ -162,7 +164,7 @@ class CompileContext final
     // AST attachments.
     tr::forward_list<DefaultArrayData> default_array_data_objects_;
     tr::forward_list<tr::vector<tr::string>> debug_strings_;
-    tr::forward_list<tr::unordered_map<Atom*, symbol*>> symbol_maps_;
+    tr::forward_list<tr::unordered_map<Atom*, Decl*>> symbol_maps_;
 
     size_t malloc_bytes_ = 0;
     size_t malloc_bytes_peak_ = 0;
@@ -171,4 +173,5 @@ class CompileContext final
     bool detected_illegal_preproc_symbols_ = false;
 };
 
+} // namespace cc
 } // namespace sp

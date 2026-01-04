@@ -1,27 +1,23 @@
 // vim: set ts=8 sts=4 sw=4 tw=99 et:
-/*  Pawn compiler - Error message system
- *  In fact a very simple system, using only 'panic mode'.
- *
- *  Copyright (c) ITB CompuPhase, 1997-2006
- *
- *  This software is provided "as-is", without any express or implied warranty.
- *  In no event will the authors be held liable for any damages arising from
- *  the use of this software.
- *
- *  Permission is granted to anyone to use this software for any purpose,
- *  including commercial applications, and to alter it and redistribute it
- *  freely, subject to the following restrictions:
- *
- *  1.  The origin of this software must not be misrepresented; you must not
- *      claim that you wrote the original software. If you use this software in
- *      a product, an acknowledgment in the product documentation would be
- *      appreciated but is not required.
- *  2.  Altered source versions must be plainly marked as such, and must not be
- *      misrepresented as being the original software.
- *  3.  This notice may not be removed or altered from any source distribution.
- *
- *  Version: $Id$
- */
+//
+//  Copyright (c) ITB CompuPhase, 1997-2006
+//  Copyright (c) 2023 AlliedModders LLC
+//
+//  This software is provided "as-is", without any express or implied warranty.
+//  In no event will the authors be held liable for any damages arising from
+//  the use of this software.
+//
+//  Permission is granted to anyone to use this software for any purpose,
+//  including commercial applications, and to alter it and redistribute it
+//  freely, subject to the following restrictions:
+//
+//  1.  The origin of this software must not be misrepresented; you must not
+//      claim that you wrote the original software. If you use this software in
+//      a product, an acknowledgment in the product documentation would be
+//      appreciated but is not required.
+//  2.  Altered source versions must be plainly marked as such, and must not be
+//      misrepresented as being the original software.
+//  3.  This notice may not be removed or altered from any source distribution.
 #pragma once
 
 #include <stdarg.h>
@@ -33,6 +29,7 @@
 #include "sc.h"
 
 namespace sp {
+namespace cc {
 
 class ParseNode;
 
@@ -75,7 +72,6 @@ class MessageBuilder
 {
   public:
     explicit MessageBuilder(int number);
-    MessageBuilder(symbol* sym, int number);
     MessageBuilder(ParseNode* node, int number);
     MessageBuilder(MessageBuilder&& other);
 
@@ -100,6 +96,7 @@ class MessageBuilder
         return *this;
     }
     MessageBuilder& operator <<(Type* type);
+    MessageBuilder& operator <<(QualType type);
 
     template <typename Integer,
               std::enable_if_t<std::is_integral<Integer>::value, bool> = true>
@@ -124,9 +121,6 @@ static inline MessageBuilder report(const token_pos_t& where, int number) {
 static inline MessageBuilder report(int number) {
     return MessageBuilder(number);
 }
-static inline MessageBuilder report(symbol* sym, int number) {
-    return MessageBuilder(sym, number);
-}
 static inline MessageBuilder report(ParseNode* node, int number) {
     return MessageBuilder(node, number);
 }
@@ -139,8 +133,12 @@ void break_on_error(int number);
 
 int pc_enablewarning(int number, int enable);
 
+class AutoDeferReports;
+
 class ReportManager
 {
+    friend class AutoDeferReports;
+
   public:
     ReportManager(CompileContext& cc);
 
@@ -160,6 +158,10 @@ class ReportManager
     AutoErrorPos* pos_override() const { return pos_override_; }
 
   private:
+    void PushAutoDefer(AutoDeferReports* defer);
+    void PopAutoDefer(AutoDeferReports* defer);
+
+  private:
     CompileContext& cc_;
     bool errflag_ = false;
     unsigned int errors_on_line_ = 0;
@@ -176,6 +178,32 @@ class ReportManager
 
     // This is the actual # of reported errors.
     size_t total_reported_errors_ = 0;
+
+    std::vector<AutoDeferReports*> defers_;
+};
+
+class AutoDeferReports {
+    friend class ReportManager;
+
+  public:
+    explicit AutoDeferReports(CompileContext& cc);
+    ~AutoDeferReports();
+
+    // Deactivate this deferral object and move all deferred reports back
+    // into ReportManager.
+    void Report();
+
+    bool HasErrors() const { return has_errors_; }
+    bool HasWarnings() const { return has_warnings_; }
+
+  private:
+    void AddDeferred(ErrorReport&& report);
+
+  private:
+    ReportManager* reports_;
+    std::vector<ErrorReport> deferred_;
+    bool has_errors_ = false;
+    bool has_warnings_ = false;
 };
 
 class AutoCountErrors
@@ -191,4 +219,5 @@ class AutoCountErrors
     unsigned old_errors_;
 };
 
+} // namespace cc
 } // namespace sp

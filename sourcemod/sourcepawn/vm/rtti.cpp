@@ -193,7 +193,7 @@ RttiParser::decodeFunction()
   uint8_t argc = bytes_[offset_++];
 
   bool variadic = false;
-  if (bytes_[offset_] == cb::kVariadic) {
+  if (bytes_[offset_] == cb::kLegacyVariadic) {
     variadic = true;
     offset_++;
   }
@@ -283,7 +283,7 @@ RttiParser::validateFunction()
   if (offset_ >= length_)
     return false;
 
-  if (bytes_[offset_] == cb::kVariadic)
+  if (bytes_[offset_] == cb::kLegacyVariadic)
     offset_++;
   if (offset_ >= length_)
     return false;
@@ -298,6 +298,7 @@ RttiParser::validateFunction()
     if (offset_ >= length_)
       return false;
     // A by_ref indicator is allowed here.
+    match(cb::kConst);
     match(cb::kByRef);
     if (!validate())
       return false;

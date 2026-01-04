@@ -28,6 +28,7 @@
 #include "sc.h"
 
 namespace sp {
+namespace cc {
 
 class SemaContext;
 struct value;
@@ -41,20 +42,27 @@ int NextExprOp(Lexer* lexer, int* opidx, int* list);
 #define MATCHTAG_ENUM_ASSN 0x10  // enum assignment
 
 struct UserOperation;
+bool find_userop(SemaContext& sc, int oper, Type* type1, Type* type2, int numparam,
+                 const value* lval, UserOperation* op);
 bool find_userop(SemaContext& sc, int oper, int tag1, int tag2, int numparam,
                  const value* lval, UserOperation* op);
-void emit_userop(const UserOperation& user_op, value* lval);
 
 int commutative(int oper);
 cell calc(cell left, int oper_tok, cell right, char* boolresult);
-bool is_valid_index_tag(int tag);
-int matchtag(int formaltag, int actualtag, int flags);
-int matchtag_commutative(int formaltag, int actualtag, int flags);
-int matchtag_string(int ident, int tag);
-int checkval_string(const value* sym1, const value* sym2);
-int checktag_string(int tag, const value* sym1);
-void user_inc();
-void user_dec();
-int checktag(int tag, int exprtag);
+bool IsValidIndexType(Type* type);
+bool matchtag(int formaltag, int actualtag, int flags);
+bool matchtag(Type* formaltag, Type* actualtag, int flags);
+bool matchtag_commutative(Type* formal, Type* actual, int flags);
+bool matchtag_commutative(int formaltag, int actualtag, int flags);
+bool matchtag_string(int ident, int tag);
+bool matchtag_string(int ident, Type* type);
+bool checkval_string(const value* sym1, const value* sym2);
+bool checktag_string(Type* type, const value* sym1);
+bool checktag(Type* type, Type* expr_type);
+bool checktag_string(int tag, const value* sym1);
+bool checktag(int tag, int exprtag);
+bool HasTagOnInheritanceChain(Type* type, Type* other);
+bool functag_compare(FunctionType* formal, FunctionType* actual);
 
+} // namespace cc
 } // namespace sp

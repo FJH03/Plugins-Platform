@@ -195,7 +195,8 @@ static const char* sErrorMsgTable[] =
   "Integer overflow",
   "Script execution timed out",
   "Custom error",
-  "Fatal error"
+  "Fatal error",
+  "Invalid array size",
 };
 
 const char*
@@ -352,8 +353,7 @@ Environment::Invoke(PluginContext* cx,
 
   // The JIT performs its own validation. Handle the interpreter here.
   {
-    auto graph = method->Validate();
-    if (!graph) {
+    if (!method->Validate()) {
       cx->ReportErrorNumber(method->validationError());
       return false;
     }

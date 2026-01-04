@@ -24,6 +24,8 @@
 #include <amtl/am-string.h>
 #include <amtl/am-vector.h>
 
+#include <optional>
+
 #include "ast-types.h"
 #include "expressions.h"
 #include "lexer.h"
@@ -33,12 +35,15 @@
 #include "symbols.h"
 
 namespace sp {
+namespace cc {
+
+class FunctionDecl;
 
 struct UserOperation
 {
     UserOperation() {}
 
-    symbol* sym = nullptr;
+    FunctionDecl* sym = nullptr;
     int oper = 0;
     int paramspassed;
     bool savepri;
@@ -49,6 +54,9 @@ struct UserOperation
 typedef void (*OpFunc)();
 
 class Expr;
+class LayoutFieldDecl;
+class MethodmapDecl;
+class MethodmapMethodDecl;
 class SemaContext;
 class SymbolScope;
 struct StructInitField;
@@ -286,9 +294,15 @@ class Decl : public Stmt
         name_(name)
     {}
 
-    Atom* name() const {
-        return name_;
-    }
+    cell ConstVal();
+
+    IdentifierKind ident();
+    IdentifierKind ident_impl();
+    char vclass();
+    bool is_const();
+    virtual Type* type() const;
+
+    Atom* name() const { return name_; }
 
   protected:
     Atom* DecorateInnerName(Atom* parent_name, Atom* field_name);
@@ -315,32 +329,48 @@ class VarDeclBase : public Decl
     // Bind only the typeinfo.
     bool BindType(SemaContext& sc);
 
+    void BindAddress(cell addr);
+
+    static bool is_a(Stmt* node) {
+        return node->kind() == StmtKind::VarDecl ||
+               node->kind() == StmtKind::ArgDecl ||
+               node->kind() == StmtKind::ConstDecl;
+    }
+
     BinaryExpr* init() const { return init_; }
     Expr* init_rhs() const;
-    int vclass() const {
-        return vclass_;
-    }
-    const typeinfo_t& type() const {
-        return type_;
-    }
-    typeinfo_t* mutable_type() {
-        return &type_;
-    }
+    int vclass() const { return vclass_; }
+    const typeinfo_t& type_info() const { return type_; }
+    typeinfo_t* mutable_type_info() { return &type_; }
     void set_init(Expr* expr);
     bool autozero() const { return autozero_; }
     void set_no_autozero() { autozero_ = false; }
-    symbol* sym() const { return sym_; }
     bool is_public() const { return is_public_; }
+    bool is_stock() const { return is_stock_; }
+    bool is_read() const { return is_read_; }
+    void set_is_read() { is_read_ = true; }
+    bool is_written() const { return is_written_; }
+    void set_is_written() { is_written_ = true; }
+    bool implicit_dynamic_array() const { return implicit_dynamic_array_; }
+    void set_implicit_dynamic_array() { implicit_dynamic_array_ = true; }
+    Label* label() { return &addr_; }
+    cell addr() const { return addr_.offset(); }
+    Type* type() const override { return type_.type; }
+
+    bool is_used() const { return is_read_ || is_written_; }
 
   protected:
     typeinfo_t type_;
-    int vclass_; // This will be implied by scope, when we get there.
     BinaryExpr* init_ = nullptr;
+    uint8_t vclass_ : 4; // This will be implied by scope, when we get there.
     bool is_public_ : 1;
     bool is_static_ : 1;
     bool is_stock_ : 1;
     bool autozero_ : 1;
-    symbol* sym_ = nullptr;
+    bool is_read_ : 1;
+    bool is_written_ : 1;
+    bool implicit_dynamic_array_ : 1;
+    Label addr_;
 };
 
 class VarDecl : public VarDeclBase
@@ -351,8 +381,15 @@ class VarDecl : public VarDeclBase
       : VarDeclBase(StmtKind::VarDecl, pos, name, type, vclass, is_public, is_static, is_stock,
                     initializer)
     {}
+    VarDecl(StmtKind kind, const token_pos_t& pos, Atom* name, const typeinfo_t& type, int vclass,
+            bool is_public, bool is_static, bool is_stock, Expr* initializer)
+      : VarDeclBase(kind, pos, name, type, vclass, is_public, is_static, is_stock,
+                    initializer)
+    {}
 
-    static bool is_a(Stmt* node) { return node->kind() == StmtKind::VarDecl; }
+    static bool is_a(Stmt* node) {
+        return node->kind() == StmtKind::VarDecl || node->kind() == StmtKind::ConstDecl;
+    }
 };
 
 class ArgDecl : public VarDeclBase
@@ -378,31 +415,52 @@ class ConstDecl : public VarDecl
   public:
     ConstDecl(const token_pos_t& pos, Atom* name, const typeinfo_t& type, int vclass,
               Expr* expr)
-      : VarDecl(pos, name, type, vclass, false, false, false, nullptr),
+      : VarDecl(StmtKind::ConstDecl, pos, name, type, vclass, false, false, false, nullptr),
         expr_(expr)
     {}
 
-    bool EnterNames(SemaContext& sc) override;
     bool Bind(SemaContext& sc) override;
+    bool EnterNames(SemaContext& sc) override;
+
+    static bool is_a(Stmt* node) { return node->kind() == StmtKind::ConstDecl; }
+
+    cell const_val() const { return value_; }
 
   private:
     Expr* expr_;
+    cell value_;
 };
 
-struct EnumField {
-    EnumField(const token_pos_t& pos, Atom* name, Expr* value)
-      : pos(pos), name(name), value(value)
+class EnumFieldDecl : public Decl
+{
+  public:
+    EnumFieldDecl(const token_pos_t& pos, Atom* name, Expr* value)
+      : Decl(StmtKind::EnumFieldDecl, pos, name),
+        value_(value)
     {}
-    token_pos_t pos;
-    Atom* name;
-    Expr* value;
+
+    void ProcessUses(SemaContext& sc) override {}
+
+    static bool is_a(Stmt* node) { return node->kind() == StmtKind::EnumFieldDecl; }
+
+    Expr* value() const { return value_; }
+    Type* type() const override { return type_; }
+    void set_type(Type* type) { type_ = type; }
+
+    cell const_val() const { return const_val_; }
+    void set_const_val(cell const_val) { const_val_ = const_val; }
+
+  private:
+    Type* type_ = nullptr;
+    Expr* value_;
+    cell const_val_ = 0;
 };
 
 class EnumDecl : public Decl
 {
   public:
     explicit EnumDecl(const token_pos_t& pos, int vclass, Atom* label, Atom* name,
-                      const std::vector<EnumField>& fields, int increment, int multiplier)
+                      const std::vector<EnumFieldDecl*>& fields, int increment, int multiplier)
       : Decl(StmtKind::EnumDecl, pos, name),
         vclass_(vclass),
         label_(label),
@@ -417,33 +475,24 @@ class EnumDecl : public Decl
 
     static bool is_a(Stmt* node) { return node->kind() == StmtKind::EnumDecl; }
 
-    PoolArray<EnumField>& fields() {
-        return fields_;
-    }
-    int increment() const {
-        return increment_;
-    }
-    int multiplier() const {
-        return multiplier_;
-    }
+    PoolArray<EnumFieldDecl*>& fields() { return fields_; }
+    int increment() const { return increment_; }
+    int multiplier() const { return multiplier_; }
+    int array_size() const { return array_size_; }
+    Type* type() const override { return type_; }
+
+    MethodmapDecl* mm() const { return mm_; }
+    void set_mm(MethodmapDecl* mm) { mm_ = mm; }
 
   private:
     int vclass_;
     Atom* label_;
-    PoolArray<EnumField> fields_;
+    PoolArray<EnumFieldDecl*> fields_;
     int increment_;
     int multiplier_;
-};
-
-struct StructField {
-    StructField(const token_pos_t& pos, Atom* name, const typeinfo_t& typeinfo)
-      : pos(pos), name(name), type(typeinfo), field(nullptr)
-    {}
-
-    token_pos_t pos;
-    Atom* name;
-    typeinfo_t type;
-    structarg_t* field;
+    int array_size_ = 0;
+    Type* type_ = nullptr;
+    MethodmapDecl* mm_ = nullptr;
 };
 
 // "Pawn Struct", or p-struct, a hack to effect a replacement for register_plugin()
@@ -452,9 +501,8 @@ struct StructField {
 class PstructDecl : public Decl
 {
   public:
-    PstructDecl(const token_pos_t& pos, Atom* name, const std::vector<StructField>& fields)
+    PstructDecl(const token_pos_t& pos, Atom* name, const std::vector<LayoutFieldDecl*>& fields)
       : Decl(StmtKind::PstructDecl, pos, name),
-        ps_(nullptr),
         fields_(fields)
     {}
 
@@ -464,11 +512,12 @@ class PstructDecl : public Decl
 
     static bool is_a(Stmt* node) { return node->kind() == StmtKind::PstructDecl; }
 
-    PoolArray<StructField>& fields() { return fields_; }
+    LayoutFieldDecl* FindField(Atom* name);
+
+    PoolArray<LayoutFieldDecl*>& fields() { return fields_; }
 
   protected:
-    pstruct_t* ps_;
-    PoolArray<StructField> fields_;
+    PoolArray<LayoutFieldDecl*> fields_;
 };
 
 struct TypedefInfo : public PoolObject {
@@ -482,7 +531,7 @@ struct TypedefInfo : public PoolObject {
     TypenameInfo ret_type;
     PoolArray<declinfo_t*> args;
 
-    functag_t* Bind(SemaContext& sc);
+    FunctionType* Bind(SemaContext& sc);
 };
 
 class TypedefDecl : public Decl
@@ -558,7 +607,7 @@ class Expr : public ParseNode
 
     // Evaluate as a constant. Returns false if non-const. This is a wrapper
     // around FoldToConstant().
-    bool EvalConst(cell* value, int* tag);
+    bool EvalConst(cell* value, Type** type);
 
     // Return whether or not the expression is idempotent (eg has side effects).
     bool HasSideEffects();
@@ -818,7 +867,8 @@ class CastExpr final : public Expr
     static bool is_a(Expr* node) { return node->kind() == ExprKind::CastExpr; }
 
     Expr* expr() const { return expr_; }
-    const auto& type() const { return type_; }
+    const auto& type_info() const { return type_; }
+    Type* type() const { return type_.type(); }
 
   private:
     int token_;
@@ -829,12 +879,9 @@ class CastExpr final : public Expr
 class SizeofExpr final : public Expr
 {
   public:
-    SizeofExpr(const token_pos_t& pos, Atom* ident, Atom* field, int suffix_token, int array_levels)
+    SizeofExpr(const token_pos_t& pos, Expr* child)
       : Expr(ExprKind::SizeofExpr, pos),
-        ident_(ident),
-        field_(field),
-        suffix_token_(suffix_token),
-        array_levels_(array_levels)
+        child_(child)
     {}
 
     bool Bind(SemaContext& sc) override;
@@ -842,18 +889,10 @@ class SizeofExpr final : public Expr
 
     static bool is_a(Expr* node) { return node->kind() == ExprKind::SizeofExpr; }
 
-    Atom* ident() const { return ident_; }
-    Atom* field() const { return field_; }
-    int suffix_token() const { return suffix_token_; }
-    int array_levels() const { return array_levels_; }
-    symbol* sym() const { return sym_; }
+    Expr* child() const { return child_; }
 
   private:
-    Atom* ident_;
-    Atom* field_;
-    int suffix_token_;
-    int array_levels_;
-    symbol* sym_ = nullptr;
+    Expr* child_;
 };
 
 class SymbolExpr final : public Expr
@@ -862,7 +901,7 @@ class SymbolExpr final : public Expr
     SymbolExpr(const token_pos_t& pos, Atom* name)
       : Expr(ExprKind::SymbolExpr, pos),
         name_(name),
-        sym_(nullptr)
+        decl_(nullptr)
     {
     }
 
@@ -873,14 +912,14 @@ class SymbolExpr final : public Expr
 
     static bool is_a(Expr* node) { return node->kind() == ExprKind::SymbolExpr; }
 
-    symbol* sym() const { return sym_; }
+    Decl* decl() const { return decl_; }
 
   private:
     bool DoBind(SemaContext& sc, bool is_lval);
 
   private:
     Atom* name_;
-    symbol* sym_;
+    Decl* decl_;
 };
 
 class NamedArgExpr : public Expr
@@ -922,8 +961,8 @@ class CallExpr final : public Expr
     int token() const { return token_; }
     Expr* implicit_this() const { return implicit_this_; }
     void set_implicit_this(Expr* expr) { implicit_this_ = expr; }
-    symbol* sym() const { return sym_; }
-    void set_sym(symbol* sym) { sym_ = sym; }
+    FunctionDecl* fun() const { return fun_; }
+    void set_fun(FunctionDecl* fun) { fun_ = fun; }
 
   private:
     bool ProcessArg(SemaContext& sc, VarDecl* arg, Expr* param, unsigned int pos);
@@ -931,7 +970,7 @@ class CallExpr final : public Expr
     int token_;
     Expr* target_;
     PoolArray<Expr*> args_;
-    symbol* sym_ = nullptr;
+    FunctionDecl* fun_ = nullptr;
     Expr* implicit_this_ = nullptr;
 };
 
@@ -1003,18 +1042,14 @@ class FieldAccessExpr final : public Expr
     Expr* base() const { return base_; }
     Expr* set_base(Expr* base) { return base_ = base; }
     Atom* name() const { return name_; }
-    symbol* field() const { return field_; }
-    void set_field(symbol* field) { field_ = field; }
-
-    methodmap_method_t* method() const { return method_; }
-    void set_method(methodmap_method_t* method) { method_ = method; }
+    Decl* resolved() const { return resolved_; }
+    void set_resolved(Decl* resolved) { resolved_ = resolved; }
 
   private:
     int token_;
     Expr* base_;
     Atom* name_;
-    methodmap_method_t* method_ = nullptr;
-    symbol* field_ = nullptr;
+    Decl* resolved_;
 };
 
 class IndexExpr final : public Expr
@@ -1028,7 +1063,8 @@ class IndexExpr final : public Expr
 
     bool Bind(SemaContext& sc) override {
         bool ok = base_->Bind(sc);
-        ok &= expr_->Bind(sc);
+        if (expr_)
+            ok &= expr_->Bind(sc);
         return ok;
     }
     void ProcessUses(SemaContext& sc) override;
@@ -1084,8 +1120,7 @@ class ThisExpr final : public Expr
 {
   public:
     explicit ThisExpr(const token_pos_t& pos)
-      : Expr(ExprKind::ThisExpr, pos),
-        sym_(nullptr)
+      : Expr(ExprKind::ThisExpr, pos)
     {}
 
     bool Bind(SemaContext& sc) override;
@@ -1093,10 +1128,10 @@ class ThisExpr final : public Expr
 
     static bool is_a(Expr* node) { return node->kind() == ExprKind::ThisExpr; }
 
-    symbol* sym() const { return sym_; }
+    VarDeclBase* decl() const { return decl_; }
 
   private:
-    symbol* sym_;
+    VarDeclBase* decl_ = nullptr;
 };
 
 class NullExpr final : public Expr
@@ -1114,9 +1149,9 @@ class NullExpr final : public Expr
 class TaggedValueExpr : public Expr
 {
   public:
-    TaggedValueExpr(const token_pos_t& pos, int tag, cell value)
+    TaggedValueExpr(const token_pos_t& pos, Type* type, cell value)
       : Expr(ExprKind::TaggedValueExpr, pos),
-        tag_(tag),
+        type_(type),
         value_(value)
     {}
 
@@ -1124,23 +1159,19 @@ class TaggedValueExpr : public Expr
 
     static bool is_a(Expr* node) { return node->kind() == ExprKind::TaggedValueExpr; }
 
-    int tag() const {
-        return tag_;
-    }
-    cell value() const {
-        return value_;
-    }
+    Type* type() const { return type_; }
+    cell value() const { return value_; }
 
   protected:
-    int tag_;
+    Type* type_;
     cell value_;
 };
 
 class NumberExpr final : public TaggedValueExpr
 {
   public:
-    NumberExpr(const token_pos_t& pos, cell value)
-      : TaggedValueExpr(pos, 0, value)
+    NumberExpr(const token_pos_t& pos, Type* type, cell value)
+      : TaggedValueExpr(pos, type, value)
     {}
 };
 
@@ -1184,10 +1215,10 @@ class NewArrayExpr final : public Expr
 
     static bool is_a(Expr* node) { return node->kind() == ExprKind::NewArrayExpr; }
 
-    int tag() { return type_.tag(); }
-    TypenameInfo& type() { return type_; }
+    Type* type() const { return type_.type(); }
+    TypenameInfo& type_info() { return type_; }
     PoolArray<Expr*>& exprs() { return exprs_; }
-    const TypenameInfo& type() const { return type_; }
+    const TypenameInfo& type_info() const { return type_; }
     bool autozero() const { return autozero_; }
     void set_no_autozero() { autozero_ = false; }
     bool analyzed() const { return analyzed_.isValid(); }
@@ -1329,15 +1360,12 @@ class ReturnStmt : public Stmt
 
     Expr* expr() const { return expr_; }
     Expr* set_expr(Expr* expr) { return expr_ = expr; }
-    typeinfo_t& array() { return array_; }
-    const typeinfo_t& array() const { return array_; }
 
   private:
     bool CheckArrayReturn(SemaContext& sc);
 
   private:
     Expr* expr_;
-    typeinfo_t array_;
 };
 
 class AssertStmt : public Stmt
@@ -1378,12 +1406,12 @@ class DeleteStmt : public Stmt
     static bool is_a(Stmt* node) { return node->kind() == StmtKind::DeleteStmt; }
 
     Expr* expr() const { return expr_; }
-    methodmap_t* map() const { return map_; }
-    void set_map(methodmap_t* map) { map_ = map; }
+    MethodmapDecl* map() const { return map_; }
+    void set_map(MethodmapDecl* map) { map_ = map; }
 
   private:
     Expr* expr_;
-    methodmap_t* map_;
+    MethodmapDecl* map_;
 };
 
 class ExitStmt : public Stmt
@@ -1523,34 +1551,44 @@ class PragmaUnusedStmt : public Stmt
     static bool is_a(Stmt* node) { return node->kind() == StmtKind::PragmaUnusedStmt; }
 
     PoolArray<Atom*>& names() { return names_; }
-    PoolArray<symbol*>& symbols() { return symbols_; }
+    PoolArray<VarDeclBase*>& symbols() { return symbols_; }
 
   private:
     PoolArray<Atom*> names_;
-    PoolArray<symbol*> symbols_;
+    PoolArray<VarDeclBase*> symbols_;
 };
 
 class FunctionDecl : public Decl
 {
   public:
-    FunctionDecl(const token_pos_t& pos, const declinfo_t& decl);
+    FunctionDecl(const token_pos_t& pos, const declinfo_t& decl)
+      : FunctionDecl(StmtKind::FunctionDecl, pos, decl)
+    {}
+    FunctionDecl(StmtKind kind, const token_pos_t& pos, const declinfo_t& decl);
 
     bool EnterNames(SemaContext& sc) override;
     bool Bind(SemaContext& sc) override;
     void ProcessUses(SemaContext& sc) override;
 
-    static bool is_a(Stmt* node) { return node->kind() == StmtKind::FunctionDecl; }
+    void AddReferenceTo(FunctionDecl* other);
+
+    static bool is_a(Stmt* node) {
+        return node->kind() == StmtKind::FunctionDecl ||
+               node->kind() == StmtKind::MemberFunctionDecl ||
+               node->kind() == StmtKind::MethodmapMethodDecl;
+    }
 
     bool IsVariadic() const;
     int FindNamedArg(Atom* name) const;
+    bool MustReturnValue() const;
 
     const token_pos_t& end_pos() const { return end_pos_; }
     void set_end_pos(const token_pos_t& end_pos) { end_pos_ = end_pos; }
 
-    const ke::Maybe<int>& this_tag() const { return this_tag_; }
-    void set_this_tag(int this_tag) {
-        if (this_tag != -1)
-            this_tag_.init(this_tag);
+    Type* this_type() const { return this_type_; }
+    void set_this_type(Type* type) {
+        assert(type);
+        this_type_ = type;
     }
 
     Stmt* body() const { return body_; }
@@ -1563,6 +1601,17 @@ class FunctionDecl : public Decl
 
     // The undecorated name.
     Atom* decl_name() const { return decl_.name; }
+
+    // Return the prototype version of this function, or |this| if there is
+    // only one definition.
+    FunctionDecl* prototype();
+
+    // Return the implementation version of this function, or |this| if there is
+    // only one definition. If no version has a body, this returns nullptr.
+    FunctionDecl* impl();
+
+    // Returns impl ? impl : prototype.
+    FunctionDecl* canonical();
 
     void set_is_native() { is_native_ = true; }
     bool is_native() const { return is_native_; }
@@ -1585,11 +1634,16 @@ class FunctionDecl : public Decl
     declinfo_t& decl() { return decl_; }
     const declinfo_t& decl() const { return decl_; }
 
-    symbol* sym() const { return sym_; }
-    void set_sym(symbol* sym) { sym_ = sym; }
+    Type* type() const override { return return_type(); }
+    Type* return_type() const { return decl_.type.type; }
 
-    const typeinfo_t& type() const { return decl_.type; }
-    typeinfo_t& mutable_type() { return decl_.type; }
+    // Only to be called when updating the type for return arrays.
+    // This should be removed when arrays are fully dynamic, or if type
+    // resolution becomes fully recursive.
+    void update_return_type(Type* type) { decl_.type.type = type; }
+
+    const typeinfo_t& type_info() const { return decl_.type; }
+    typeinfo_t& mutable_type_info() { return decl_.type; }
 
     bool is_analyzing() const { return is_analyzing_; }
     void set_is_analyzing(bool val) { is_analyzing_ = val; }
@@ -1599,31 +1653,75 @@ class FunctionDecl : public Decl
         analyzed_ = true;
         analyze_result_ = val;
     }
+    bool retvalue_used() const { return retvalue_used_; }
+    void set_retvalue_used() { retvalue_used_ = true; }
+    bool is_callback() const { return is_callback_; }
+    void set_is_callback() { is_callback_ = true; }
+    bool returns_value() const { return returns_value_; }
+    void set_returns_value(bool value) { returns_value_ = value; }
+    bool always_returns() const { return always_returns_; }
+    void set_always_returns(bool value) { always_returns_ = value; }
+    bool is_live() const { return is_live_; }
+    void set_is_live() { is_live_ = true; }
+    bool maybe_used() const { return maybe_used_; }
+    void set_maybe_used() { maybe_used_ = true; }
 
     void set_deprecate(const std::string& deprecate) { deprecate_ = new PoolString(deprecate); }
+    const char* deprecate() const {
+        return deprecate_ ? deprecate_->chars() : nullptr;
+    }
 
     SymbolScope* scope() const { return scope_; }
 
-    bool maybe_returns_array() const { return maybe_returns_array_; }
-    void set_maybe_returns_array() { maybe_returns_array_ = true; }
-
     void CheckReturnUsage();
+    bool IsVariadic();
 
-  private:
+    struct ReturnArrayInfo : public PoolObject {
+        cell_t hidden_address = 0;
+        cell_t iv_size = 0;
+        cell_t dat_addr = 0;
+        cell_t zeroes = 0;
+    };
+    ReturnArrayInfo* return_array() const { return return_array_; }
+    void set_return_array(ReturnArrayInfo* base) { return_array_ =  base; }
+
+    const PoolForwardList<FunctionDecl*>* refers_to() const {
+        return refers_to_;
+    }
+
+    struct CGInfo : public PoolObject {
+        tr::vector<tr::string>* dbgstrs = nullptr;
+        Label label;     // modern replacement for addr
+        Label funcid;
+        int max_local_stack = 0;
+        int max_callee_stack = 0;
+        uint32_t pcode_end = 0;
+    };
+    CGInfo* cg();
+
+  protected:
     bool BindArgs(SemaContext& sc);
-    bool CanRedefine(symbol* sym);
+    FunctionDecl* CanRedefine(Decl* other);
     Atom* NameForOperator();
 
-  private:
+  protected:
     token_pos_t end_pos_;
     declinfo_t decl_;
     Stmt* body_ = nullptr;
     PoolArray<ArgDecl*> args_;
-    symbol* sym_ = nullptr;
     SymbolScope* scope_ = nullptr;
-    ke::Maybe<int> this_tag_;
+    Type* this_type_ = nullptr;
     PoolString* deprecate_ = nullptr;
     TokenCache* tokens_ = nullptr;
+    FunctionDecl* proto_or_impl_ = nullptr;
+    ReturnArrayInfo* return_array_ = nullptr;
+
+    // Other symbols that this symbol refers to.
+    PoolForwardList<FunctionDecl*>* refers_to_ = nullptr;
+
+    // Set during codegen.
+    CGInfo* cg_ = nullptr;
+
     bool analyzed_ SP_BITFIELD(1);
     bool analyze_result_ SP_BITFIELD(1);
     bool is_public_ SP_BITFIELD(1);
@@ -1632,19 +1730,83 @@ class FunctionDecl : public Decl
     bool is_forward_ SP_BITFIELD(1);
     bool is_native_ SP_BITFIELD(1);
     bool is_analyzing_ SP_BITFIELD(1);
-    bool maybe_returns_array_ SP_BITFIELD(1);
+    bool explicit_return_type_ SP_BITFIELD(1);
+    bool retvalue_used_ SP_BITFIELD(1);
+    bool is_callback_ SP_BITFIELD(1);
+    bool returns_value_ SP_BITFIELD(1);  // whether any path returns a value
+    bool always_returns_ SP_BITFIELD(1); // whether all paths have an explicit return statement
+    bool is_live_ SP_BITFIELD(1);        // must have code generated/linkage
+    bool maybe_used_ SP_BITFIELD(1);     // not necessarily live, but do not warn if unused.
+    bool checked_one_signature SP_BITFIELD(1);
+    bool compared_prototype_args SP_BITFIELD(1);
 };
 
-struct EnumStructField {
-    token_pos_t pos;
-    declinfo_t decl;
-};
-
-class EnumStructDecl : public Decl
+class LayoutDecl : public Decl
 {
   public:
-    explicit EnumStructDecl(const token_pos_t& pos, Atom* name)
-      : Decl(StmtKind::EnumStructDecl, pos, name)
+    explicit LayoutDecl(StmtKind kind, const token_pos_t& pos, Atom* name)
+      : Decl(kind, pos, name)
+    {}
+
+    static bool is_a(Stmt* node) {
+        return node->kind() == StmtKind::MethodmapDecl ||
+               node->kind() == StmtKind::EnumStructDecl;
+    }
+};
+
+class MemberFunctionDecl : public FunctionDecl
+{
+  public:
+    MemberFunctionDecl(const token_pos_t& pos, LayoutDecl* parent, const declinfo_t& decl)
+      : FunctionDecl(StmtKind::MemberFunctionDecl, pos, decl),
+        parent_(parent)
+    {}
+    MemberFunctionDecl(StmtKind kind, const token_pos_t& pos, LayoutDecl* parent,
+                       const declinfo_t& decl)
+      : FunctionDecl(kind, pos, decl),
+        parent_(parent)
+    {}
+
+    static bool is_a(Stmt* node) {
+        return node->kind() == StmtKind::MemberFunctionDecl ||
+               node->kind() == StmtKind::MethodmapMethodDecl;
+    }
+
+    LayoutDecl* parent() const { return parent_; }
+
+  private:
+    LayoutDecl* parent_;
+};
+
+class LayoutFieldDecl : public Decl
+{
+  public:
+    LayoutFieldDecl(const token_pos_t& pos, const declinfo_t& decl)
+      : Decl(StmtKind::LayoutFieldDecl, pos, decl.name),
+        type_(decl.type)
+    {}
+
+    void ProcessUses(SemaContext& sc) override {}
+
+    static bool is_a(Stmt* node) { return node->kind() == StmtKind::LayoutFieldDecl; }
+
+    const typeinfo_t& type_info() const { return type_; }
+    typeinfo_t& mutable_type_info() { return type_; }
+    Type* type() const override { return type_info().type; }
+
+    cell_t offset() const { return offset_; }
+    void set_offset(cell_t offset) { offset_ = offset; }
+
+  private:
+    typeinfo_t type_;
+    cell_t offset_;
+};
+
+class EnumStructDecl : public LayoutDecl
+{
+  public:
+    EnumStructDecl(const token_pos_t& pos, Atom* name)
+      : LayoutDecl(StmtKind::EnumStructDecl, pos, name)
     {}
 
     bool EnterNames(SemaContext& sc) override;
@@ -1654,37 +1816,56 @@ class EnumStructDecl : public Decl
     static bool is_a(Stmt* node) { return node->kind() == StmtKind::EnumStructDecl; }
 
     PoolArray<FunctionDecl*>& methods() { return methods_; }
-    PoolArray<EnumStructField>& fields() { return fields_; }
+    PoolArray<LayoutFieldDecl*>& fields() { return fields_; }
+
+    cell_t array_size() const { return array_size_; }
+    Type* type() const override { return type_; }
 
   private:
     PoolArray<FunctionDecl*> methods_;
-    PoolArray<EnumStructField> fields_;
-    symbol* root_ = nullptr;
+    PoolArray<LayoutFieldDecl*> fields_;
+    Type* type_ = nullptr;
+    cell_t array_size_ = 0;
 };
 
-struct MethodmapProperty : public PoolObject {
-    token_pos_t pos;
-    typeinfo_t type;
-    Atom* name = nullptr;
-    FunctionDecl* getter = nullptr;
-    FunctionDecl* setter = nullptr;
-    methodmap_method_t* entry = nullptr;
+class MethodmapPropertyDecl : public Decl {
+  public:
+    MethodmapPropertyDecl(const token_pos_t& pos, Atom* name, const typeinfo_t& type,
+                          MemberFunctionDecl* getter, MemberFunctionDecl* setter)
+      : Decl(StmtKind::MethodmapPropertyDecl, pos, name),
+        type_(type),
+        getter_(getter),
+        setter_(setter)
+    {}
+
+    void ProcessUses(SemaContext& sc) override;
+
+    static bool is_a(Stmt* node) { return node->kind() == StmtKind::MethodmapPropertyDecl; }
+
+    Type* property_type() const;
+
+    const typeinfo_t& type_info() const { return type_; }
+    typeinfo_t& mutable_type_info() { return type_; }
+    Type* type() const override { return type_.type; }
+    MemberFunctionDecl* getter() const { return getter_; }
+    MemberFunctionDecl* setter() const { return setter_; }
+    LayoutDecl* parent() const {
+        return getter_ ? getter_->parent() : setter_->parent();
+    }
+
+  private:
+    typeinfo_t type_;
+    MemberFunctionDecl* getter_;
+    MemberFunctionDecl* setter_;
 };
 
-struct MethodmapMethod : public PoolObject {
-    bool is_static = false;
-    bool is_ctor = false;
-    bool is_dtor = false;
-    FunctionDecl* decl = nullptr;
-    methodmap_method_t* entry = nullptr;
-};
-
-class MethodmapDecl : public Decl
+class MethodmapDecl : public LayoutDecl
 {
   public:
     explicit MethodmapDecl(const token_pos_t& pos, Atom* name, bool nullable, Atom* extends)
-      : Decl(StmtKind::MethodmapDecl, pos, name),
+      : LayoutDecl(StmtKind::MethodmapDecl, pos, name),
         nullable_(nullable),
+        is_bound_(false),
         extends_(extends)
     {}
 
@@ -1692,23 +1873,55 @@ class MethodmapDecl : public Decl
     bool Bind(SemaContext& sc) override;
     void ProcessUses(SemaContext& sc) override;
 
+    static MethodmapDecl* LookupMethodmap(Decl* decl);
+
     static bool is_a(Stmt* node) { return node->kind() == StmtKind::MethodmapDecl; }
 
-    PoolArray<MethodmapProperty*>& properties() { return properties_; }
-    PoolArray<MethodmapMethod*>& methods() { return methods_; }
+    Decl* FindMember(Atom* name) const;
+
+    PoolArray<MethodmapMethodDecl*>& methods() { return methods_; }
+    PoolArray<MethodmapPropertyDecl*>& properties() { return properties_; }
+    MethodmapDecl* parent() const { return parent_; }
+    bool nullable() const { return nullable_; }
+    bool is_bound() const { return is_bound_; }
+    Type* type() const override { return type_; }
+    MethodmapMethodDecl* ctor() const { return ctor_; }
+    MethodmapMethodDecl* dtor() const { return dtor_; }
 
   private:
-    bool BindGetter(SemaContext& sc, MethodmapProperty* prop);
-    bool BindSetter(SemaContext& sc, MethodmapProperty* prop);
+    bool BindGetter(SemaContext& sc, MethodmapPropertyDecl* prop);
+    bool BindSetter(SemaContext& sc, MethodmapPropertyDecl* prop);
 
   private:
-    bool nullable_;
+    bool nullable_ : 1;
+    bool is_bound_ : 1;
     Atom* extends_;
-    PoolArray<MethodmapProperty*> properties_;
-    PoolArray<MethodmapMethod*> methods_;
-
-    methodmap_t* map_ = nullptr;
-    symbol* sym_ = nullptr;
+    PoolArray<MethodmapPropertyDecl*> properties_;
+    PoolArray<MethodmapMethodDecl*> methods_;
+    MethodmapDecl* parent_ = nullptr;
+    MethodmapMethodDecl* ctor_ = nullptr;
+    MethodmapMethodDecl* dtor_ = nullptr;
+    Type* type_ = nullptr;
 };
 
+class MethodmapMethodDecl : public MemberFunctionDecl {
+  public:
+    MethodmapMethodDecl(const token_pos_t& pos, const declinfo_t& decl, MethodmapDecl* parent,
+                        bool is_ctor, bool is_dtor)
+      : MemberFunctionDecl(StmtKind::MethodmapMethodDecl, pos, parent, decl),
+        is_ctor_(is_ctor),
+        is_dtor_(is_dtor)
+    {}
+
+    static bool is_a(Stmt* node) { return node->kind() == StmtKind::MethodmapMethodDecl; }
+
+    bool is_ctor() const { return is_ctor_; }
+    bool is_dtor() const { return is_dtor_; }
+
+  private:
+    bool is_ctor_ : 1;
+    bool is_dtor_ : 1;
+};
+
+} // namespace cc
 } // namespace sp

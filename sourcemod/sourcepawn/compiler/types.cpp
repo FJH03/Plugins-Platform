@@ -4,6 +4,7 @@
  *  Function and variable definition and declaration, statement parser.
  *
  *  Copyright (c) ITB CompuPhase, 1997-2006
+ *  Copyright (c) AlliedModders LLC 2024
  *
  *  This software is provided "as-is", without any express or implied warranty.
  *  In no event will the authors be held liable for any damages arising from
@@ -20,39 +21,50 @@
  *  2.  Altered source versions must be plainly marked as such, and must not be
  *      misrepresented as being the original software.
  *  3.  This notice may not be removed or altered from any source distribution.
- *
- *  Version: $Id$
  */
 #include <ctype.h>
 
 #include <utility>
 
+#include <amtl/am-string.h>
+#include "array-helpers.h"
 #include "compile-context.h"
+#include "parse-node.h"
 #include "sc.h"
 #include "sctracker.h"
 #include "types.h"
 
 namespace sp {
+namespace cc {
 
 using namespace ke;
 
 Type::Type(Atom* name, TypeKind kind)
  : name_(name),
-   value_(0),
-   fixed_(0),
+   index_(-1),
    kind_(kind)
 {
-    private_ptr_ = nullptr;
 }
 
-const char*
-Type::prettyName() const
-{
+const char* Type::prettyName() {
   if (kind_ == TypeKind::Function)
     return kindName();
-  if (tagid() == 0)
-    return "int";
-  return name()->chars();
+  if (kind_ == TypeKind::Array && !name_) {
+      std::string suffix;
+      auto iter = to<ArrayType>();
+      for (;;) {
+          if (iter->size())
+              suffix += ke::StringPrintf("[%d]", iter->size());
+          else
+              suffix += "[]";
+          if (!iter->inner()->isArray())
+              break;
+          iter = iter->inner()->to<ArrayType>();
+      }
+      suffix = iter->inner()->prettyName() + suffix;
+      name_ = CompileContext::get().atom(suffix);
+  }
+  return declName()->chars();
 }
 
 const char*
@@ -61,7 +73,7 @@ Type::kindName() const
   switch (kind_) {
     case TypeKind::EnumStruct:
       return "enum struct";
-    case TypeKind::Struct:
+    case TypeKind::Pstruct:
       return "struct";
     case TypeKind::Methodmap:
       return "methodmap";
@@ -75,7 +87,7 @@ Type::kindName() const
           return "typeset";
         if (ke::StartsWith(name_->chars(), "::"))
           return "function";
-        return "typedef";
+        return "function";
       }
       return "function";
     default:
@@ -83,119 +95,154 @@ Type::kindName() const
   }
 }
 
-TypeDictionary::TypeDictionary(CompileContext& cc)
-  : cc_(cc)
-{}
+bool Type::canOperatorOverload() const {
+    return isEnum() || isMethodmap() || isFloat() || isInt();
+}
 
-Type* TypeDictionary::find(Atom* atom) {
+bool Type::isCharArray() const {
+    return isArray() && inner()->isChar();
+}
+
+cell_t Type::CellStorageSize() {
+    if (auto at = as<ArrayType>())
+        return CalcArraySize(at);
+    if (auto es = asEnumStruct())
+        return es->array_size();
+    return 1;
+}
+
+ArrayType::ArrayType(Type* inner, int size)
+  : Type(nullptr, TypeKind::Array)
+{
+    inner_type_ = inner;
+    size_ = size;
+}
+
+TypeManager::TypeManager(CompileContext& cc)
+  : cc_(cc)
+{
+    array_cache_.init(256);
+    function_cache_.init(512);
+}
+
+Type* TypeManager::find(Atom* atom) {
     auto iter = types_.find(atom);
     if (iter == types_.end())
         return nullptr;
     return iter->second;
 }
 
-Type* TypeDictionary::find(int tag) {
-    auto iter = tags_.find(tag);
-    assert(iter != tags_.end());
-    return iter->second;
+Type* TypeManager::Get(int index) {
+    return by_index_[index];
 }
 
-Type* TypeDictionary::add(const char* name, TypeKind kind) {
+Type* TypeManager::add(const char* name, TypeKind kind) {
     return add(cc_.atom(name), kind);
 }
 
-Type* TypeDictionary::add(Atom* name, TypeKind kind) {
+Type* TypeManager::add(Atom* name, TypeKind kind) {
     Type* type = new Type(name, kind);
     RegisterType(type);
     return type;
 }
 
-void TypeDictionary::RegisterType(Type* type) {
-    assert(types_.find(type->name()) == types_.end());
+void TypeManager::RegisterType(Type* type, bool unique_name) {
+    type->set_index((int)by_index_.size());
+    by_index_.emplace_back(type);
 
-    int tag = int(types_.size());
-    type->set_tag(tag);
-    types_.emplace(type->name(), type);
-    tags_.emplace(tag, type);
+    if (unique_name) {
+        assert(types_.find(type->declName()) == types_.end());
+        types_.emplace(type->declName(), type);
+    }
 }
 
-void
-TypeDictionary::init()
-{
-    type_int_ = add("_", TypeKind::Int);
-    type_bool_ = defineBool();
-    type_any_ = defineAny();
+Type* TypeManager::defineBuiltin(const char* name, BuiltinType type) {
+    Type* ptr = add(name, TypeKind::Builtin);
+    ptr->setBuiltinType(type);
+    return ptr;
+}
+
+ArrayType* TypeManager::defineArray(Type* element_type, int dim) {
+    return defineArray(element_type, &dim, 1);
+}
+
+ArrayType* TypeManager::defineArray(Type* element_type, const PoolArray<int>& dim_vec) {
+    return defineArray(element_type, dim_vec.buffer(), (int)dim_vec.size());
+}
+
+ArrayType* TypeManager::defineArray(Type* element_type, const int* dim_vec, int numdim) {
+    assert(!element_type->isArray());
+    assert(numdim >= 1);
+
+    size_t depth = numdim - 1;
+    Type* iter = element_type;
+    for (;;) {
+        auto lookup = ArrayCachePolicy::Lookup{iter, dim_vec[depth]};
+        auto p = array_cache_.findForAdd(lookup);
+        if (!p.found()) {
+            auto at = new ArrayType(iter, dim_vec[depth]);
+            RegisterType(at, false);
+
+            array_cache_.add(p, at);
+        }
+        iter = *p;
+
+        if (!depth)
+            break;
+        depth--;
+    }
+    return iter->to<ArrayType>();
+}
+
+ArrayType* TypeManager::redefineArray(Type* element_type, ArrayType* old_type) {
+    std::vector<int> dim_vec;
+    for (auto iter = old_type; iter; iter = iter->inner()->as<ArrayType>())
+        dim_vec.emplace_back(iter->size());
+    return defineArray(element_type, dim_vec.data(), (int)dim_vec.size());
+}
+
+void TypeManager::init() {
+    type_int_ = defineBuiltin("int", BuiltinType::Int);
+    types_.emplace(cc_.atom("_"), type_int_);
+
+    type_bool_ = defineBuiltin("bool", BuiltinType::Bool);
+    type_any_ = defineBuiltin("any", BuiltinType::Any);
+
+    type_float_ = defineBuiltin("float", BuiltinType::Float);
+    types_.emplace(cc_.atom("Float"), type_float_);
+
+    type_void_ = defineBuiltin("void", BuiltinType::Void);
+    type_null_ = defineBuiltin("null_t", BuiltinType::Null);
+
+    type_string_ = defineBuiltin("char", BuiltinType::Char);
+    types_.emplace(cc_.atom("String"), type_string_);
+
     type_function_ = defineFunction(cc_.atom("Function"), nullptr);
-    type_string_ = defineString();
-    type_float_ = defineFloat();
-    type_void_ = defineVoid();
     type_object_ = defineObject("object");
-    type_null_ = defineObject("null_t");
 }
 
-Type*
-TypeDictionary::defineAny()
-{
-    return add("any", TypeKind::Any);
-}
-
-Type* TypeDictionary::defineFunction(Atom* name, funcenum_t* fe) {
+Type* TypeManager::defineFunction(Atom* name, funcenum_t* fe) {
     Type* type = add(name, TypeKind::Function);
     type->setFunction(fe);
     return type;
 }
 
-Type*
-TypeDictionary::defineString()
-{
-    Type* type = add("String", TypeKind::String);
-    type->setFixed();
-    return type;
-}
-
-Type*
-TypeDictionary::defineFloat()
-{
-    Type* type = add("Float", TypeKind::Float);
-    type->setFixed();
-    return type;
-}
-
-Type*
-TypeDictionary::defineVoid()
-{
-    Type* type = add("void", TypeKind::Void);
-    type->setFixed();
-    return type;
-}
-
-Type*
-TypeDictionary::defineObject(const char* name)
-{
+Type* TypeManager::defineObject(const char* name) {
     Type* type = add(name, TypeKind::Object);
     type->setObject();
     return type;
 }
 
-Type*
-TypeDictionary::defineBool()
-{
-    return add("bool", TypeKind::Bool);
-}
-
-Type*
-TypeDictionary::defineMethodmap(const char* name, methodmap_t* map)
-{
-    auto atom = cc_.atom(name);
-    Type* type = find(atom);
+Type* TypeManager::defineMethodmap(Atom* name, MethodmapDecl* map) {
+    Type* type = find(name);
     if (!type)
-        type = add(atom, TypeKind::Methodmap);
+        type = add(name, TypeKind::Methodmap);
     type->setMethodmap(map);
     return type;
 }
 
 Type*
-TypeDictionary::defineEnumTag(const char* name)
+TypeManager::defineEnumTag(const char* name)
 {
     auto atom = cc_.atom(name);
     if (auto type = find(atom)) {
@@ -204,57 +251,102 @@ TypeDictionary::defineEnumTag(const char* name)
     }
 
     Type* type = add(atom, TypeKind::Enum);
-    if (isupper(*name))
-        type->setFixed();
     return type;
 }
 
-Type*
-TypeDictionary::defineEnumStruct(const char* name, symbol* sym)
-{
+Type* TypeManager::defineEnumStruct(Atom* name, EnumStructDecl* decl) {
     Type* type = add(name, TypeKind::EnumStruct);
-    type->setEnumStruct(sym);
+    type->setEnumStruct(decl);
     return type;
 }
 
 Type*
-TypeDictionary::defineTag(Atom* name) {
+TypeManager::defineTag(Atom* name) {
     Type* type = add(name, TypeKind::Enum);
-    if (isupper(*name->chars()))
-        type->setFixed();
     return type;
 }
 
-pstruct_t* TypeDictionary::definePStruct(Atom* name) {
-    assert(find(name) == nullptr);
+Type* TypeManager::definePstruct(PstructDecl* decl) {
+    assert(find(decl->name()) == nullptr);
 
-    pstruct_t* type = new pstruct_t(name);
-    RegisterType(type);
+    Type* type = add(decl->name(), TypeKind::Pstruct);
+    type->setPstruct(decl);
     return type;
 }
 
-const char*
-pc_tagname(int tag)
-{
-    auto types = CompileContext::get().types();
-    if (Type* type = types->find(tag))
-        return type->name()->chars();
-    return "__unknown__";
+Type* TypeManager::defineReference(Type* inner) {
+    assert(!inner->isReference());
+
+    if (auto it = ref_types_.find(inner); it != ref_types_.end())
+        return it->second;
+
+    auto name = inner->declName()->str() + "&";
+    Type* type = new Type(cc_.atom(name), TypeKind::Reference);
+    type->setReference(inner);
+    RegisterType(type, false);
+
+    ref_types_.emplace(inner, type);
+    return type;
 }
 
-bool
-typeinfo_t::isCharArray() const
+FunctionType* TypeManager::defineFunction(Type* return_type,
+                                          const std::vector<std::pair<QualType, sp::Atom*>>& args,
+                                          bool variadic)
 {
-    auto types = CompileContext::get().types();
-    return numdim() == 1 && tag() == types->tag_string();
-}
+    FunctionCachePolicy::Lookup lookup{return_type, &args, variadic};
+    auto p = function_cache_.findForAdd(lookup);
+    if (!p.found()) {
+        auto ft = new FunctionType(return_type, args, variadic);
+        RegisterType(ft, false);
 
-const structarg_t* pstruct_t::GetArg(Atom* name) const {
-    for (const auto& arg : args) {
-        if (arg->name == name)
-            return arg;
+        function_cache_.add(p, ft);
     }
-    return nullptr;
+    return *p;
 }
 
+bool TypeManager::ArrayCachePolicy::matches(const Lookup& lookup, ArrayType* type) {
+    return lookup.type == type->inner() && lookup.size == type->size();
+}
+
+static inline uint32_t HashArrayType(Type* type, int size) {
+    auto first = ke::HashPointer(type);
+    auto second = ke::HashInt32(size);
+    return ke::HashCombine(first, second);
+}
+
+uint32_t TypeManager::ArrayCachePolicy::hash(const Lookup& lookup) {
+    return HashArrayType(lookup.type, lookup.size);
+}
+
+TypenameInfo typeinfo_t::ToTypenameInfo() const {
+    if (type)
+        return TypenameInfo(type);
+    return TypenameInfo(type_atom, is_label);
+}
+
+bool TypeManager::FunctionCachePolicy::matches(const Lookup& lookup, FunctionType* fun) {
+    if (lookup.return_type != fun->return_type())
+        return false;
+    if (lookup.args->size() != fun->nargs())
+        return false;
+    for (unsigned int i = 0; i < fun->nargs(); i++) {
+        if (lookup.args->at(i).first != fun->arg_type(i))
+            return false;
+        if (lookup.args->at(i).second != fun->arg_name(i))
+            return false;
+    }
+    return true;
+}
+
+uint32_t TypeManager::FunctionCachePolicy::hash(const Lookup& lookup) {
+    uint32_t h = ke::HashPointer(lookup.return_type);
+    for (size_t i = 0; i < lookup.args->size(); i++) {
+        h = ke::HashCombine(h, lookup.args->at(i).first.hash());
+        h = ke::HashCombine(h, ke::HashPointer(lookup.args->at(i).second));
+    }
+    h = ke::HashCombine(h, ke::HashInt32(lookup.variadic));
+    return h;
+}
+
+} // namespace cc
 } // namespace sp

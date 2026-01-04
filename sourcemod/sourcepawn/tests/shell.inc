@@ -2,6 +2,11 @@
 #include <float>
 #include <handles>
 
+enum struct TestStruct {
+    int x;
+    int y;
+}
+
 native void printnum(int n);
 native void writenum(int n);
 native void printfloat(float n);
@@ -12,6 +17,9 @@ native void dump_stack_trace();
 native void report_error();
 native void unbound_native();
 native int donothing();
+
+// dumb version of printf(), only supports %f, %d, %s.
+native void printf(const char[] fmt, any:...);
 
 // Return arg, but through a dynamically generated native.
 native int dynamic_native(int arg);
@@ -42,3 +50,6 @@ native void copy_2d_array_to_callback(const int[] flat_array, int length, int st
                                       Array2dCallback callback);
 
 native void assert_eq(any a1, any a2);
+
+native void print_test_struct(TestStruct x);
+native TestStruct add_test_structs(TestStruct a, TestStruct b);

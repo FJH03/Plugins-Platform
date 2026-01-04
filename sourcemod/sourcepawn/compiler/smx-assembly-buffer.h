@@ -15,8 +15,7 @@
 //
 // You should have received a copy of the GNU General Public License along with
 // SourcePawn. If not, see http://www.gnu.org/licenses/.
-#ifndef _include_spcomp_smx_assembly_buffer_h_
-#define _include_spcomp_smx_assembly_buffer_h_
+#pragma once
 
 #include "shared/byte-buffer.h"
 #include <smx/smx-v1-opcodes.h>
@@ -27,6 +26,7 @@
 #include "symbols.h"
 
 namespace sp {
+namespace cc {
 
 enum regid {
     sPRI, /* indicates the primary register */
@@ -111,9 +111,9 @@ class SmxAssemblyBuffer : public ByteBuffer
     emit(OP_POP_ALT);
   }
 
-  void load_hidden_arg(symbol* fun, symbol* sym, bool save_pri) {
-    if (!fun->is_variadic()) {
-      address(sym, sALT);
+  void load_hidden_arg(FunctionDecl* fun, bool save_pri) {
+    if (!fun->IsVariadic()) {
+      emit(OP_LOAD_S_ALT, fun->return_array()->hidden_address);
       return;
     }
 
@@ -143,20 +143,27 @@ class SmxAssemblyBuffer : public ByteBuffer
       emit(OP_POP_PRI);
   }
 
-  void address(symbol* sym, regid reg) {
-    if (sym->ident == iREFARRAY || sym->ident == iREFERENCE) {
+  void address(Decl* sym, regid reg) {
+    address(sym->as<VarDeclBase>(), reg);
+  }
+
+  void address(VarDeclBase* sym, regid reg) {
+    if (IsReferenceType(sym->ident(), sym->type()) && IsLocal(sym->vclass())) {
       if (reg == sPRI)
         emit(OP_LOAD_S_PRI, sym->addr());
       else
         emit(OP_LOAD_S_ALT, sym->addr());
     } else {
+      if (sym->type()->isArray())
+        assert(sym->vclass() == sGLOBAL || sym->vclass() == sSTATIC);
+
       if (reg == sPRI) {
-        if (sym->vclass == sLOCAL || sym->vclass == sARGUMENT)
+        if (sym->vclass() == sLOCAL || sym->vclass() == sARGUMENT)
           emit(OP_ADDR_PRI, sym->addr());
         else
           emit(OP_CONST_PRI, sym->addr());
       } else {
-        if (sym->vclass == sLOCAL || sym->vclass == sARGUMENT)
+        if (sym->vclass() == sLOCAL || sym->vclass() == sARGUMENT)
           emit(OP_ADDR_ALT, sym->addr());
         else
           emit(OP_CONST_ALT, sym->addr());
@@ -164,11 +171,11 @@ class SmxAssemblyBuffer : public ByteBuffer
     }
   }
 
-  void copyarray(symbol* sym, cell size) {
-    if (sym->ident == iREFARRAY) {
-      assert(sym->vclass == sLOCAL || sym->vclass == sARGUMENT); // symbol must be stack relative
+  void copyarray(VarDeclBase* sym, cell size) {
+    if (sym->type()->isArray()) {
+      assert(sym->vclass() == sLOCAL || sym->vclass() == sARGUMENT); // symbol must be stack relative
       emit(OP_LOAD_S_ALT, sym->addr());
-    } else if (sym->vclass == sLOCAL || sym->vclass == sARGUMENT) {
+    } else if (sym->vclass() == sLOCAL || sym->vclass() == sARGUMENT) {
       emit(OP_ADDR_ALT, sym->addr());
     } else {
       emit(OP_CONST_ALT, sym->addr());
@@ -250,6 +257,5 @@ class SmxAssemblyBuffer : public ByteBuffer
   }
 };
 
-}
-
-#endif // _include_spcomp_smx_assembly_buffer_h_
+} // namespace cc
+} // namespace sp

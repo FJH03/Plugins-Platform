@@ -69,6 +69,9 @@ Interpreter::run()
     return false;
 
   while (!has_returned_ && reader_.more()) {
+    if (env_->spew_interp_ops())
+      SpewOpcode(stdout, rt_, reader_.start(), reader_.cip());
+
     if (reader_.peekOpcode() == OP_PROC || reader_.peekOpcode() == OP_ENDPROC)
       break;
     if (!reader_.visitNext())
@@ -156,8 +159,7 @@ Interpreter::visitCALL(cell_t offset)
     return false;
   }
   {
-    auto graph = target->Validate();
-    if (!graph) {
+    if (!target->Validate()) {
       cx_->ReportErrorNumber(target->validationError());
       return false;
     }

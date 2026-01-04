@@ -24,6 +24,9 @@
 #include "symbols.h"
 
 namespace sp {
+namespace cc {
+
+class Decl;
 
 class SymbolScope final : public PoolObject
 {
@@ -35,7 +38,7 @@ class SymbolScope final : public PoolObject
         fnumber_(fnumber)
     {}
 
-    symbol* Find(Atom* atom) const {
+    Decl* Find(Atom* atom) const {
         if (!symbols_)
             return nullptr;
         auto iter = symbols_->find(atom);
@@ -44,12 +47,12 @@ class SymbolScope final : public PoolObject
         return iter->second;
     }
 
-    void Add(symbol* sym);
+    void Add(Decl* decl);
 
     // Add, but allow duplicates by linking together.
-    void AddChain(symbol* sym);
+    void AddChain(Decl* decl);
 
-    void ForEachSymbol(const std::function<void(symbol*)>& callback) {
+    void ForEachSymbol(const std::function<void(Decl*)>& callback) {
         if (!symbols_)
             return;
         for (const auto& pair : *symbols_) {
@@ -74,11 +77,12 @@ class SymbolScope final : public PoolObject
   private:
     SymbolScope* parent_;
     ScopeKind kind_;
-    tr::unordered_map<Atom*, symbol*>* symbols_;
+    tr::unordered_map<Atom*, Decl*>* symbols_;
     int fnumber_;
 };
 
-symbol* FindSymbol(SymbolScope* scope, Atom* name, SymbolScope** found = nullptr);
-symbol* FindSymbol(SemaContext& sc, Atom* name, SymbolScope** found = nullptr);
+Decl* FindSymbol(SymbolScope* scope, Atom* name, SymbolScope** found = nullptr);
+Decl* FindSymbol(SemaContext& sc, Atom* name, SymbolScope** found = nullptr);
 
+} // namespace cc
 } // namespace sp

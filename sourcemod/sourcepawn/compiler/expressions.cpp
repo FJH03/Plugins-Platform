@@ -35,8 +35,10 @@
 #include "semantics.h"
 #include "symbols.h"
 #include "types.h"
+#include "value-inl.h"
 
 namespace sp {
+namespace cc {
 
 /* Function addresses of binary operators for signed operations */
 static const int op1[17] = {
@@ -58,35 +60,33 @@ static const int op1[17] = {
     tlEQ, tlNE
 };
 
-static inline bool
-MatchOperator(int oper, symbol* sym, int tag1, int tag2, int numparam)
+static inline bool MatchOperator(int oper, FunctionDecl* fun, Type* type1, Type* type2,
+                                 int numparam)
 {
     if (!oper)
         numparam = 1;
 
-    auto fun = sym->function()->node;
     const auto& args = fun->args();
     if (args.size() != size_t(numparam))
         return false;
 
     assert(numparam == 1 || numparam == 2);
-    int tags[2] = { tag1, tag2 };
+    Type* types[2] = { type1, type2 };
 
     for (int i = 0; i < numparam; i++) {
-        if (args[i]->type().ident != iVARIABLE)
+        if (args[i]->type_info().is_varargs)
             return false;
-        if (args[i]->type().tag() != tags[i])
+        if (args[i]->type_info().type != types[i])
             return false;
     }
 
-    if (!oper && sym->tag != tag2)
+    if (!oper && fun->type() != type2)
         return false;
     return true;
 }
 
-bool
-find_userop(SemaContext& sc, int oper, int tag1, int tag2, int numparam, const value* lval,
-            UserOperation* op)
+bool find_userop(SemaContext& sc, int oper, Type* type1, Type* type2, int numparam,
+                 const value* lval, UserOperation* op)
 {
     static const char* binoperstr[] = {"*", "/", "%",  "+",  "-", "",  "",   "",  "",
                                        "",  "",  "<=", ">=", "<", ">", "==", "!="};
@@ -100,13 +100,18 @@ find_userop(SemaContext& sc, int oper, int tag1, int tag2, int numparam, const v
     size_t i;
     bool savepri, savealt;
 
+    if (type1->isReference())
+        type1 = type1->inner();
+    if (type2 && type2->isReference())
+        type2 = type2->inner();
+
     /* since user-defined operators on untagged operands are forbidden, we have
      * a quick exit.
      */
     assert(numparam == 1 || numparam == 2);
     if (sc.cc().in_preprocessor())
         return false;
-    if (tag1 == 0 && (numparam == 1 || tag2 == 0))
+    if (type1->isInt() && (numparam == 1 || type2->isInt()))
         return false;
 
     savepri = savealt = false;
@@ -147,39 +152,34 @@ find_userop(SemaContext& sc, int oper, int tag1, int tag2, int numparam, const v
 
     // :TODO: restrict this to globals.
     auto opername_atom = sc.cc().atom(opername);
-    symbol* chain = FindSymbol(sc, opername_atom);
+    Decl* chain = FindSymbol(sc, opername_atom);
     if (!chain)
         return false;
 
-    symbol* sym = nullptr;
+    FunctionDecl* decl = nullptr;
     bool swapparams;
     bool is_commutative = commutative(oper);
     for (auto iter = chain; iter; iter = iter->next) {
-        bool matched = MatchOperator(oper, iter, tag1, tag2, numparam);
+        auto fun = iter->as<FunctionDecl>();
+        if (!fun)
+            continue;
+        fun = fun->canonical();
+
+        bool matched = MatchOperator(oper, fun, type1, type2, numparam);
         bool swapped = false;
-        if (!matched && is_commutative && tag1 != tag2 && oper) {
-            matched = MatchOperator(oper, iter, tag2, tag1, numparam);
+        if (!matched && is_commutative && type1 != type2 && oper) {
+            matched = MatchOperator(oper, fun, type2, type1, numparam);
             swapped = true;
         }
         if (matched) {
-            sym = iter;
+            decl = fun;
             swapparams = swapped;
             break;
         }
     }
 
-    if (!sym)
+    if (!decl)
         return false;
-
-    /* check existance and the proper declaration of this function */
-    if (!sym->defined) {
-        auto types = CompileContext::get().types();
-        if (numparam == 1)
-            report(406) << opername << types->find(tag1);
-        else
-            report(407) << opername << types->find(tag1) << types->find(tag2);
-        return false;
-    }
 
     /* we don't want to use the redefined operator in the function that
      * redefines the operator itself, otherwise the snippet below gives
@@ -187,13 +187,13 @@ find_userop(SemaContext& sc, int oper, int tag1, int tag2, int numparam, const v
      *    fixed:operator+(fixed:a, fixed:b)
      *        return a + b
      */
-    if (sym == sc.func()) {
+    if (decl == sc.func()) {
         report(408);
     }
 
-    markusage(sym, uREAD);
+    markusage(decl, uREAD);
 
-    op->sym = sym;
+    op->sym = decl;
     op->oper = oper;
     op->paramspassed = (oper == 0) ? 1 : numparam;
     op->savepri = savepri;
@@ -202,268 +202,230 @@ find_userop(SemaContext& sc, int oper, int tag1, int tag2, int numparam, const v
     return true;
 }
 
-int
-checktag_string(int tag, const value* sym1)
-{
-    if (sym1->ident == iARRAY || sym1->ident == iREFARRAY)
-        return FALSE;
+bool checktag_string(Type* type, const value* sym1) {
+    if (sym1->type()->isArray())
+        return false;
 
-    auto types = CompileContext::get().types();
-    if ((sym1->tag == types->tag_string() && tag == 0) ||
-        (sym1->tag == 0 && tag == types->tag_string())) {
-        return TRUE;
-    }
-    return FALSE;
-}
-
-int
-checkval_string(const value* sym1, const value* sym2)
-{
-    if (sym1->ident == iARRAY || sym2->ident == iARRAY || sym1->ident == iREFARRAY ||
-        sym2->ident == iREFARRAY)
-    {
-        return FALSE;
-    }
-
-    auto types = CompileContext::get().types();
-    if ((sym1->tag == types->tag_string() && sym2->tag == 0) ||
-        (sym1->tag == 0 && sym2->tag == types->tag_string()))
-    {
-        return TRUE;
-    }
-
-    return FALSE;
-}
-
-const char*
-type_to_name(int tag)
-{
-    auto types = CompileContext::get().types();
-    if (tag == 0)
-        return "int";
-    if (tag == types->tag_float())
-        return "float";
-    if (tag == types->tag_string())
-        return "char";
-    if (tag == types->tag_any())
-        return "any";
-
-    Type* type = types->find(tag);
-    if (!type)
-        return "-unknown-";
-    return type->prettyName();
-}
-
-int
-matchtag_string(int ident, int tag)
-{
-    auto types = CompileContext::get().types();
-    if (ident == iARRAY || ident == iREFARRAY)
-        return FALSE;
-    return (tag == types->tag_string()) ? TRUE : FALSE;
-}
-
-static int
-obj_typeerror(int id, int tag1, int tag2)
-{
-    const char* left = pc_tagname(tag1);
-    const char* right = pc_tagname(tag2);
-    if (!left || strcmp(left, "_") == 0)
-        left = "int";
-    if (!right || strcmp(right, "_") == 0)
-        right = "int";
-    report(id) << right << left;
-    return FALSE;
-}
-
-static int
-matchobjecttags(Type* formal, Type* actual, int flags)
-{
-    auto types = CompileContext::get().types();
-    int formaltag = formal->tagid();
-    int actualtag = actual->tagid();
-
-    // objects never coerce to non-objects, YET.
-    if (formal->isObject() && !(actual->isObject() || actual->isFunction())) {
-        if (!(flags & MATCHTAG_SILENT))
-            obj_typeerror(132, formaltag, actualtag);
-        return FALSE;
-    }
-
-    if (actualtag == types->tag_null()) {
-        // All objects are nullable.
-        if (formal->isFunction() || formal->isObject())
-            return TRUE;
-
-        // Some methodmaps are nullable. The nullable property is inherited
-        // automatically.
-        methodmap_t* map = formal->asMethodmap();
-        if (map && map->nullable)
-            return TRUE;
-
-        if (!(flags & MATCHTAG_SILENT))
-            report(148) << pc_tagname(formaltag);
-        return FALSE;
-    }
-
-    if (!formal->isObject() && actual->isObject())
-        return obj_typeerror(131, formaltag, actualtag);
-
-    // Every object coerces to "object".
-    if (formaltag == types->tag_object())
-        return TRUE;
-
-    if (flags & MATCHTAG_COERCE)
-        return obj_typeerror(134, formaltag, actualtag);
-
-    methodmap_t* map = actual->asMethodmap();
-    for (; map; map = map->parent) {
-        if (map->tag == formaltag)
-            return TRUE;
-    }
-
-    if (!(flags & MATCHTAG_SILENT))
-        obj_typeerror(133, formaltag, actualtag);
-    return FALSE;
-}
-
-static int
-matchreturntag(const functag_t* formal, const functag_t* actual)
-{
-    if (formal->ret_tag == actual->ret_tag)
-        return TRUE;
-
-    auto types = CompileContext::get().types();
-    if (formal->ret_tag == types->tag_void()) {
-        if (actual->ret_tag == 0)
-            return TRUE;
-    }
-    return FALSE;
-}
-
-static bool
-IsValidImplicitArrayCast(int formal_tag, int actual_tag)
-{
-    // Dumb check for now. This should really do a deep type validation though.
-    // Fix this when we overhaul types in 1.12.
-    auto types = CompileContext::get().types();
-    if ((formal_tag == types->tag_any() && actual_tag != types->tag_string()) ||
-        (actual_tag == types->tag_any() && formal_tag != types->tag_string()))
+    if ((sym1->type()->isChar() && type->isInt()) ||
+        (sym1->type()->isInt() && type->isChar()))
     {
         return true;
     }
-    return formal_tag == actual_tag;
+    return false;
 }
 
-static int
-funcarg_compare(const funcarg_t* formal, const funcarg_t* actual)
-{
-    // Check type.
-    if (actual->type.ident != formal->type.ident)
-        return FALSE;
-
-    if (actual->type.ident == iREFARRAY || actual->type.ident == iARRAY) {
-        if (actual->type.dim != formal->type.dim)
-            return FALSE;
-    }
-
-    // Do not allow casting between different array types, eg:
-    //   any[] <-> float[] is illegal.
-    if (!formal->type.dim.empty() &&
-        !IsValidImplicitArrayCast(formal->type.tag(), actual->type.tag()))
-    {
-        return FALSE;
-    }
-
-    if (!matchtag(formal->type.tag(), actual->type.tag(), MATCHTAG_SILENT | MATCHTAG_FUNCARG))
-        return FALSE;
-    return TRUE;
-}
-
-static int
-functag_compare(const functag_t* formal, const functag_t* actual)
-{
-    // Check return types.
-    if (!matchreturntag(formal, actual))
-        return FALSE;
-
-    // Make sure there are no trailing arguments.
-    if (actual->args.size() > formal->args.size())
-        return FALSE;
-
-    // Check arguments.
-    for (size_t i = 0; i < formal->args.size(); i++) {
-        const funcarg_t* formal_arg = &formal->args[i];
-
-        if (i >= actual->args.size())
-            return FALSE;
-
-        const funcarg_t* actual_arg = &actual->args[i];
-        if (!funcarg_compare(formal_arg, actual_arg))
-            return FALSE;
-    }
-
-    return TRUE;
-}
-
-static int
-matchfunctags(Type* formal, Type* actual)
-{
-    int formaltag = formal->tagid();
-    int actualtag = actual->tagid();
-
-    auto types = CompileContext::get().types();
-    if (formaltag == types->tag_function() && actual->isFunction())
-        return TRUE;
-
-    if (actualtag == types->tag_null())
-        return TRUE;
-
-    if (!actual->isFunction())
-        return FALSE;
-
-    functag_t* actualfn = functag_from_tag(actualtag);
-    if (!actualfn)
-        return FALSE;
-
-    funcenum_t* e = formal->toFunction();
-    if (!e)
-        return FALSE;
-
-    for (const auto& formalfn : e->entries) {
-        if (functag_compare(formalfn, actualfn))
-            return TRUE;
-    }
-
-    return FALSE;
-}
-
-static bool
-HasTagOnInheritanceChain(Type* type, int tag)
-{
-    methodmap_t* map = type->asMethodmap();
-    if (!map)
+bool checkval_string(const value* sym1, const value* sym2) {
+    if (sym1->type()->isArray() || sym2->type()->isArray())
         return false;
-    for (; map; map = map->parent) {
-        if (map->tag == tag)
+    if ((sym1->type()->isChar() && sym2->type()->isInt()) ||
+        (sym1->type()->isInt() && sym2->type()->isChar()))
+    {
+        return true;
+    }
+    return false;
+}
+
+bool matchtag_string(int ident, Type* type) {
+    if (type->isArray())
+        return false;
+    return type->isChar();
+}
+
+static bool matchobjecttags(Type* formal, Type* actual, int flags) {
+    // objects never coerce to non-objects, YET.
+    if (formal->isObject() && !(actual->isObject() || actual->isFunction())) {
+        if (!(flags & MATCHTAG_SILENT))
+            report(132) << formal << actual;
+        return false;
+    }
+
+    if (actual->isNull()) {
+        // All objects are nullable.
+        if (formal->isFunction() || formal->isObject())
+            return true;
+
+        // Some methodmaps are nullable. The nullable property is inherited
+        // automatically.
+        auto map = formal->asMethodmap();
+        if (map && map->nullable())
+            return true;
+
+        if (!(flags & MATCHTAG_SILENT))
+            report(148) << formal;
+        return false;
+    }
+
+    if (!formal->isObject() && actual->isObject()) {
+        report(131) << formal << actual;
+        return false;
+    }
+
+    // Every object coerces to "object".
+    if (formal->isObject())
+        return true;
+
+    if (flags & MATCHTAG_COERCE) {
+        report(134) << formal << actual;
+        return false;
+    }
+
+    auto map = actual->asMethodmap();
+    for (; map; map = map->parent()) {
+        if (map->type() == formal)
+            return true;
+    }
+
+    if (!(flags & MATCHTAG_SILENT))
+        report(133) << formal << actual;
+    return false;
+}
+
+static bool matchreturntag(const FunctionType* formal, const FunctionType* actual) {
+    if (formal->return_type() == actual->return_type())
+        return true;
+
+    if (formal->return_type()->isVoid()) {
+        if (actual->return_type()->isInt())
             return true;
     }
     return false;
 }
 
-int
-matchtag(int formaltag, int actualtag, int flags)
-{
-    if (formaltag == actualtag)
-        return TRUE;
+static bool IsValidImplicitArrayCast(Type* formal, Type* actual) {
+    // Dumb check for now. This should really do a deep type validation though.
+    // Fix this when we overhaul types in 1.12.
+    formal = formal->to<ArrayType>()->inner();
+    actual = actual->to<ArrayType>()->inner();
+    if ((formal->isAny() && !actual->isChar()) || (actual->isAny() && !formal->isChar())) {
+        return true;
+    }
+    return formal == actual;
+}
 
-    auto types = CompileContext::get().types();
-    Type* actual = types->find(actualtag);
-    Type* formal = types->find(formaltag);
-    assert(actual && formal);
+static bool funcarg_compare(QualType formal, QualType actual) {
+    // Check type.
+    if (actual == formal)
+        return true;
 
-    if (formaltag == types->tag_string() && actualtag == 0)
-        return TRUE;
+    // :TODO: replace this mess with TypeChecker.
+
+    // Do not allow casting between different array strides, eg:
+    //   any[] to char[] is illegal.
+    Type* formal_type = *formal;
+    Type* actual_type = *actual;
+    if (formal_type->isArray()) {
+        if (!IsValidImplicitArrayCast(formal_type, actual_type))
+            return false;
+
+        for (;;) {
+            auto formal_iter = formal_type->as<ArrayType>();
+            auto actual_iter = actual_type->as<ArrayType>();
+            if (!formal_iter) {
+                if (actual_iter)
+                    return false;
+                // Neither is an array, this is ok.
+                break;
+            }
+            if (!actual_iter)
+                return false;
+
+            if (formal_iter->size() != actual_iter->size())
+                return false;
+
+            formal_type = formal_iter->inner();
+            actual_type = actual_iter->inner();
+        }
+    }
+
+    if (formal_type->isReference() != actual_type->isReference())
+        return false;
+
+    if (!matchtag(formal_type, actual_type, MATCHTAG_SILENT | MATCHTAG_FUNCARG))
+        return false;
+    return true;
+}
+
+bool functag_compare(FunctionType* formal, FunctionType* actual) {
+    // Check return types.
+    if (!matchreturntag(formal, actual))
+        return false;
+
+    // Make sure there are no trailing arguments.
+    if (actual->nargs() > formal->nargs())
+        return false;
+    if (actual->variadic() != formal->variadic())
+        return false;
+
+    // Check arguments.
+    for (size_t i = 0; i < formal->nargs(); i++) {
+        auto formal_arg = formal->arg_type(i);
+
+        if (i >= actual->nargs())
+            return false;
+
+        auto actual_arg = actual->arg_type(i);
+        if (!funcarg_compare(formal_arg, actual_arg))
+            return false;
+    }
+    return true;
+}
+
+static bool matchfunctags(Type* formal, Type* actual) {
+    if (formal->isCanonicalFunction() && actual->isFunction())
+        return true;
+
+    if (actual->isNull())
+        return true;
+
+    if (!actual->isFunction())
+        return false;
+
+    auto actual_fe = actual->asFunction();
+    if (!actual_fe || actual_fe->entries.empty())
+        return false;
+
+    FunctionType* actualfn = actual_fe->entries.back();
+    if (!actualfn)
+        return false; 
+
+    funcenum_t* e = formal->toFunction();
+    if (!e)
+        return false;
+
+    for (const auto& formalfn : e->entries) {
+        if (functag_compare(formalfn, actualfn))
+            return true;
+    }
+    return false;
+}
+
+bool HasTagOnInheritanceChain(Type* type, Type* other) {
+    auto map = type->asMethodmap();
+    if (!map)
+        return false;
+    for (; map; map = map->parent()) {
+        if (map->type() == other)
+            return true;
+    }
+    return false;
+}
+
+bool matchtag(Type* formal, Type* actual, int flags) {
+    Type* given_formal = formal;
+    Type* given_actual = actual;
+
+    if (flags & MATCHTAG_COERCE) {
+        if (formal->isReference())
+            formal = formal->inner();
+        if (actual->isReference())
+            actual = actual->inner();
+    }
+
+    if (formal == actual)
+        return true;
+
+    if (formal->isChar() && actual->isInt())
+        return true;
 
     if (formal->isObject() || actual->isObject())
         return matchobjecttags(formal, actual, flags);
@@ -471,37 +433,42 @@ matchtag(int formaltag, int actualtag, int flags)
     if (actual->isFunction() && !formal->isFunction()) {
         // We're being given a function, but the destination is not a function.
         report(130);
-        return FALSE;
+        return false;
     }
 
-    /* if the formal tag is zero and the actual tag is not "fixed", the actual
-     * tag is "coerced" to zero
-     */
-    if ((flags & MATCHTAG_COERCE) && !formaltag && actual && !actual->isFixed()) {
-        return TRUE;
+    if (formal->asEnumStruct() || actual->asEnumStruct()) {
+        if (formal != actual) {
+            report(134) << given_formal << given_actual;
+            return false;
+        }
+        return true;
     }
 
-    if (actualtag == types->tag_any())
-        return TRUE;
+    // int coerces to bool/any.
+    if ((flags & MATCHTAG_COERCE) && formal->isInt() && actual->coercesFromInt())
+        return true;
+
+    if (actual->isAny())
+        return true;
 
     // We allow this even on function signature checks as a convenient shorthand,
     // even though it violates standard contravariance rules.
-    if (formaltag == types->tag_any())
-        return TRUE;
+    if (formal->isAny())
+        return true;
 
     if (formal->isFunction()) {
         if (!matchfunctags(formal, actual)) {
             report(100);
-            return FALSE;
+            return false;
         }
-        return TRUE;
+        return true;
     }
 
     if (flags & (MATCHTAG_COERCE | MATCHTAG_DEDUCE | MATCHTAG_FUNCARG)) {
         // See if the tag has a methodmap associated with it. If so, see if the given
         // tag is anywhere on the inheritance chain.
-        if (HasTagOnInheritanceChain(actual, formaltag))
-            return TRUE;
+        if (HasTagOnInheritanceChain(actual, formal))
+            return true;
 
         // As a special exception to the "any" rule above, we allow the inverse
         // to succeed for signature matching. This is a convenience and allows
@@ -514,28 +481,27 @@ matchtag(int formaltag, int actualtag, int flags)
         //
         // In the future, we can insert a runtime check here. For now, we can't,
         // but we allow it anyway.
-        if ((flags & MATCHTAG_FUNCARG) && HasTagOnInheritanceChain(formal, actualtag))
-            return TRUE;
+        if ((flags & MATCHTAG_FUNCARG) && HasTagOnInheritanceChain(formal, actual))
+            return true;
     }
 
     if (flags & MATCHTAG_ENUM_ASSN) {
-        if (formal->isEnum() && actualtag == 0)
-            return TRUE;
+        if (formal->isEnum() && actual->isInt())
+            return true;
     }
 
     if (!(flags & MATCHTAG_SILENT))
-        report(213) << type_to_name(formaltag) << type_to_name(actualtag);
-    return FALSE;
+        report(213) << given_formal << given_actual;
+    return false;
 }
 
-int matchtag_commutative(int formaltag, int actualtag, int flags)
-{
-    if (matchtag(formaltag, actualtag, flags | MATCHTAG_SILENT))
-        return TRUE;
-    if (matchtag(actualtag, formaltag, flags | MATCHTAG_SILENT))
-        return TRUE;
+bool matchtag_commutative(Type* formal, Type* actual, int flags) {
+    if (matchtag(formal, actual, flags | MATCHTAG_SILENT))
+        return true;
+    if (matchtag(actual, formal, flags | MATCHTAG_SILENT))
+        return false;
     // Report the error.
-    return matchtag(formaltag, actualtag, flags);
+    return matchtag(formal, actual, flags);
 }
 
 cell
@@ -582,30 +548,20 @@ calc(cell left, int oper_tok, cell right, char* boolresult)
     return 0;
 }
 
-bool
-is_valid_index_tag(int tag)
-{
-    auto types = CompileContext::get().types();
-    if (tag == 0 || tag == types->tag_any() || tag == types->tag_string())
-        return true;
-
-    Type* idx_type = types->find(tag);
-    return idx_type->isEnum();
+bool IsValidIndexType(Type* type) {
+    return type->isInt() || type->isAny() || type->isChar() || type->isEnum();
 }
 
-int
-checktag(int tag, int exprtag)
-{
+bool checktag(Type* type, Type* expr_type) {
     AutoCountErrors errors;
 
-    if (matchtag(tag, exprtag, MATCHTAG_COERCE))
-        return TRUE; /* matching tag */
+    if (matchtag(type, expr_type, MATCHTAG_COERCE))
+        return true; /* matching tag */
 
     // If matchtag() didn't error, report an error.
     if (errors.ok())
-        report(213) << type_to_name(tag) << type_to_name(exprtag);
-
-    return FALSE; /* no tag matched */
+        report(213) << type << expr_type;
+    return false;
 }
 
 /*  commutative
@@ -641,4 +597,5 @@ commutative(int oper)
     }
 }
 
+} // namespace cc
 } // namespace sp

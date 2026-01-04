@@ -31,7 +31,6 @@
 #pragma once
 
 #include <limits.h>
-#include <setjmp.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -53,58 +52,31 @@ typedef int32_t cell;
 typedef uint32_t ucell;
 
 namespace sp {
+namespace cc {
 
 /* Note: the "cell" and "ucell" types are defined in AMX.H */
 
 #define PUBLIC_CHAR '@' /* character that defines a function "public" */
-#define sCHARBITS 8     /* size of a packed character */
-
-#define sLINEMAX 4095
-#define PREPROC_TERM \
-    '\x7f' /* termination character for preprocessor expressions (the "DEL" code) */
 #define sDEF_PREFIX "sourcemod.inc" /* default prefix filename */
 
 struct DefaultArrayData;
+class VarDecl;
 
 struct DefaultArg : public PoolObject {
-    int tag = 0;
+    Type* type = nullptr;
     ke::Maybe<cell> val;
     DefaultArrayData* array = nullptr;
-    symbol* sym = nullptr;
-
-    ~DefaultArg();
+    VarDecl* sym = nullptr;
 };
-struct methodmap_t;
-struct stringlist;
  
-class EnumData;
-class EnumStructData;
-class EnumStructVarData;
-class FunctionData;
-class SymbolData : public PoolObject
-{
-  public:
-    virtual FunctionData* asFunction() { return nullptr; }
-    virtual EnumStructVarData* asEnumStructVar() { return nullptr; }
-    virtual methodmap_t* asMethodmap() { return nullptr; }
-    virtual EnumStructData* asEnumStruct() { return nullptr; }
-    virtual EnumData* asEnum() { return nullptr; }
-};
-
-struct symbol;
-
 // Values for symbol::usage.
 #define uREAD       0x1     // Used/accessed.
 #define uWRITTEN    0x2     // Altered/written (variables only).
-#define uLIVE       0x4     // Marked during liveness analysis.
 
 #define uMAINFUNC "main"
 
-struct methodmap_method_t;
-
 #define DECLFLAG_ARGUMENT 0x02       // The declaration is for an argument.
 #define DECLFLAG_VARIABLE 0x04       // The declaration is for a variable.
-#define DECLFLAG_ENUMROOT 0x08       // Multi-dimensional arrays should have an enumroot.
 #define DECLFLAG_MAYBE_FUNCTION 0x10 // Might be a named function.
 #define DECLFLAG_OLD 0x40            // Known old-style declaration.
 #define DECLFLAG_FIELD 0x80          // Struct field.
@@ -128,13 +100,6 @@ struct declinfo_t {
 #    define FALSE 0
 #    define TRUE 1
 #endif
-#define sIN_CSEG 1     /* if parsing CODE */
-#define sIN_DSEG 2     /* if parsing DATA */
-#define sSYMBOLIC 2    /* bit position in "debug" variable: symbolic info */
-
-#define CELL_MAX (((ucell)1 << (sizeof(cell) * 8 - 1)) - 1)
-
-struct token_t;
 
 const char* type_to_name(int tag);
 
@@ -145,7 +110,8 @@ constexpr cell char_array_cells(cell size) {
     return (size + sizeof(cell) - 1) / sizeof(cell);
 }
 
-static constexpr cell kMaxCells = INT_MAX / sizeof(cell);
+// Label needs one extra bit, so divide by 2.
+static constexpr cell kMaxCells = INT_MAX / sizeof(cell) / 2;
 
 // Disable this to enable easy watchpoints on bitfield members.
 #if 1
@@ -154,4 +120,5 @@ static constexpr cell kMaxCells = INT_MAX / sizeof(cell);
 # define SP_BITFIELD(n)
 #endif
 
+} // namespace cc
 } // namespace sp

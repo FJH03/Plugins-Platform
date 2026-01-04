@@ -28,6 +28,7 @@
 #include "stl/stl-deque.h"
 
 namespace sp {
+namespace cc {
 
 class Semantics;
 
@@ -37,7 +38,7 @@ class Parser
     Parser(CompileContext& cc, Semantics* sema);
     ~Parser();
 
-    static bool PreprocExpr(cell* val, int* tag);
+    static bool PreprocExpr(cell* val, Type** type);
 
     ParseTree* Parse();
 
@@ -45,8 +46,6 @@ class Parser
     typedef int (Parser::*HierFn)(value*);
     typedef Expr* (Parser::*NewHierFn)();
 
-
-    static symbol* ParseInlineFunction(int tokid, const declinfo_t& decl, const int* this_tag);
 
     void ChangeStaticScope(std::vector<Stmt*>* stmts);
 
@@ -60,9 +59,11 @@ class Parser
     Decl* parse_typeset();
     Decl* parse_enumstruct();
     Decl* parse_methodmap();
-    MethodmapMethod* parse_methodmap_method(MethodmapDecl* map);
-    MethodmapProperty* parse_methodmap_property(MethodmapDecl* map);
-    bool parse_methodmap_property_accessor(MethodmapDecl* map, MethodmapProperty* prop);
+    MethodmapMethodDecl* parse_methodmap_method(MethodmapDecl* map);
+    MethodmapPropertyDecl* parse_methodmap_property(MethodmapDecl* map);
+    bool parse_methodmap_property_accessor(MethodmapDecl* map, Atom* name, const typeinfo_t& type,
+                                           MemberFunctionDecl** out_getter,
+                                           MemberFunctionDecl** out_setter);
 
     struct VarParams {
         int vclass;
@@ -137,11 +138,13 @@ class Parser
     Semantics* sema_;
     bool in_loop_ = false;
     bool in_test_ = false;
+    bool allow_empty_array_index_ = false;
     std::shared_ptr<Lexer> lexer_;
-    TypeDictionary* types_ = nullptr;
+    TypeManager* types_ = nullptr;
     tr::deque<FunctionDecl*> delayed_functions_;
     tr::unordered_map<size_t, SymbolScope*> static_scopes_;
     int sources_index_ = -1;
 };
 
+} // namespace cc
 } // namespace sp

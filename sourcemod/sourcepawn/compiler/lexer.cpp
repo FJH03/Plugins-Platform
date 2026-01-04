@@ -62,6 +62,7 @@
 #include "types.h"
 
 namespace sp {
+namespace cc {
 
 namespace fs = std::filesystem;
 
@@ -284,6 +285,7 @@ void Lexer::lex_float(full_token_t* tok, cell_t whole) {
                 break;
             advance();
             exp = (exp * 10) + (c - '0');
+            ndigits++;
         }
         if (!ndigits)
             report(425);
@@ -297,9 +299,9 @@ void Lexer::lex_float(full_token_t* tok, cell_t whole) {
     tok->id = tRATIONAL;
 }
 
-int Lexer::preproc_expr(cell* val, int* tag) {
+int Lexer::preproc_expr(cell* val, Type** type) {
     ke::SaveAndSet<bool> forbid_const(&cc_.in_preprocessor(), true);
-    return Parser::PreprocExpr(val, tag); /* get value (or 0 on error) */
+    return Parser::PreprocExpr(val, type); /* get value (or 0 on error) */
 }
 
 enum {
@@ -649,7 +651,7 @@ void Lexer::HandleSkippedSection() {
 
                     if (!IsSkipping())
                         return;
-                    break;
+                    continue;
 
                 default:
                     continue;
@@ -2135,9 +2137,9 @@ cell Lexer::litchar(int flags, bool* is_codepoint) {
         case 'x': {
             int digits = 0;
             c = 0;
-            while (true) {
+            while (digits < 2) {
                 char ch = peek();
-                if (!ishex(ch) || digits >= 3)
+                if (!ishex(ch))
                     break;
                 if (IsDigit(ch))
                     c = (c << 4) + (ch - '0');
@@ -2294,11 +2296,6 @@ bool Lexer::DeleteMacro(Atom* atom) {
 
     macros_.erase(p);
     return true;
-}
-
-DefaultArg::~DefaultArg()
-{
-    delete array;
 }
 
 bool
@@ -2555,7 +2552,17 @@ std::string Lexer::PerformMacroSubstitution(MacroEntry* macro,
         assert(substitute[pos] == '%');
         assert(IsDigit(substitute[pos + 1]));
 
-        out += substitute.substr(last_start, pos - last_start);
+        // Position where the last text run ends.
+        size_t last_end = pos;
+
+        // If #%n, chop the # from the text run.
+        bool stringize = false;
+        if (pos > 0 && substitute[pos - 1] == '#') {
+            last_end--;
+            stringize = true;
+        }
+
+        out += substitute.substr(last_start, last_end - last_start);
         last_start = pos + 2;
 
         char arg_pos = substitute[pos + 1] - '0';
@@ -2565,7 +2572,10 @@ std::string Lexer::PerformMacroSubstitution(MacroEntry* macro,
             out.push_back(substitute[pos + 1]);
             continue;
         }
-        out += iter->second;
+        if (stringize)
+            out += '"' + iter->second + '"';
+        else
+            out += iter->second;
     }
 
     out += substitute.substr(last_start);
@@ -2645,4 +2655,5 @@ void Lexer::DiscardCachedTokens() {
     injected_token_stream_.clear();
 }
 
+} // namespace cc
 } // namespace sp

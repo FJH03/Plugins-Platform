@@ -31,6 +31,7 @@
 #include "types.h"
 
 namespace sp {
+namespace cc {
 
 CompileContext* CompileContext::sInstance = nullptr;
 
@@ -44,7 +45,7 @@ CompileContext::CompileContext()
     reports_ = std::make_unique<ReportManager>(*this);
     options_ = std::make_unique<CompileOptions>();
     sources_ = std::make_unique<SourceManager>(*this);
-    types_ = std::make_unique<TypeDictionary>(*this);
+    types_ = std::make_unique<TypeManager>(*this);
     types_->init();
 }
 
@@ -75,7 +76,7 @@ tr::vector<tr::string>* CompileContext::NewDebugStringList() {
     return &debug_strings_.front();
 }
 
-tr::unordered_map<Atom*, symbol*>* CompileContext::NewSymbolMap() {
+tr::unordered_map<Atom*, Decl*>* CompileContext::NewSymbolMap() {
     symbol_maps_.emplace_front();
     return &symbol_maps_.front();
 }
@@ -104,4 +105,5 @@ void NativeAllocator::Free(void* p, size_t n) {
     free(p);
 }
 
+} // namespace cc
 } // namespace sp

@@ -11,6 +11,7 @@
 //  including commercial applications, and to alter it and redistribute it
 //  freely, subject to the following restrictions:
 //
+//  This software is provided "as-is", without any express or implied warranty.
 //  1.  The origin of this software must not be misrepresented; you must not
 //      claim that you wrote the original software. If you use this software in
 //      a product, an acknowledgment in the product documentation would be
@@ -38,6 +39,7 @@
 #include "types.h"
 
 namespace sp {
+namespace cc {
 
 Parser::Parser(CompileContext& cc, Semantics* sema)
   : cc_(cc),
@@ -172,7 +174,7 @@ Parser::Parse()
         add_to_end.pop_front();
     }
 
-    while (!delayed_functions_.empty()) {
+    while (!delayed_functions_.empty() && !cc_.must_abort()) {
         auto fun = ke::PopFront(&delayed_functions_);
 
         auto tokens = fun->tokens();
@@ -244,14 +246,14 @@ Parser::parse_unknown_decl(const full_token_t* tok)
             break;
     }
 
-    int flags = DECLFLAG_MAYBE_FUNCTION | DECLFLAG_VARIABLE | DECLFLAG_ENUMROOT;
+    int flags = DECLFLAG_MAYBE_FUNCTION | DECLFLAG_VARIABLE;
     if (tok->id == tNEW)
         flags |= DECLFLAG_OLD;
 
     if (!parse_decl(&decl, flags)) {
         // Error will have been reported earlier. Reset |decl| so we don't crash
         // thinking tag -1 has every flag.
-        decl.type.set_tag(0);
+        decl.type.set_type(types_->type_int());
     }
 
     // Hacky bag o' hints as to whether this is a variable decl.
@@ -297,9 +299,7 @@ Parser::parse_unknown_decl(const full_token_t* tok)
     return nullptr;
 }
 
-bool
-Parser::PreprocExpr(cell* val, int* tag)
-{
+bool Parser::PreprocExpr(cell* val, Type** type) {
     auto& cc = CompileContext::get();
 
     Semantics sema(cc);
@@ -315,7 +315,7 @@ Parser::PreprocExpr(cell* val, int* tag)
 
     if (!expr->Bind(sc) || !sema.CheckExpr(expr))
         return false;
-    return expr->EvalConst(val, tag);
+    return expr->EvalConst(val, type);
 }
 
 Stmt*
@@ -344,9 +344,9 @@ Parser::parse_var(declinfo_t* decl, VarParams& params)
             break;
 
         if (decl->type.is_new)
-            reparse_new_decl(decl, DECLFLAG_VARIABLE | DECLFLAG_ENUMROOT);
+            reparse_new_decl(decl, DECLFLAG_VARIABLE);
         else
-            reparse_old_decl(decl, DECLFLAG_VARIABLE | DECLFLAG_ENUMROOT);
+            reparse_old_decl(decl, DECLFLAG_VARIABLE);
     }
 
     if (stmts.size() > 1)
@@ -393,7 +393,7 @@ Parser::parse_enum(int vclass)
         lexer_->need(')');
     }
 
-    std::vector<EnumField> fields;
+    std::vector<EnumFieldDecl*> fields;
 
     lexer_->need('{');
 
@@ -424,7 +424,7 @@ Parser::parse_enum(int vclass)
             value = hier14();
 
         if (field_name)
-            fields.push_back(EnumField(pos, field_name, value));
+            fields.push_back(new EnumFieldDecl(pos, field_name, value));
     } while (lexer_->match(','));
 
     lexer_->need('}');
@@ -448,7 +448,7 @@ Parser::parse_enumstruct()
 
     auto stmt = new EnumStructDecl(pos, struct_name);
 
-    std::vector<EnumStructField> fields;
+    std::vector<LayoutFieldDecl*> fields;
     std::vector<FunctionDecl*> methods;
 
     int opening_line = lexer_->fline();
@@ -459,13 +459,12 @@ Parser::parse_enumstruct()
         }
 
         declinfo_t decl = {};
-        decl.type.ident = iVARIABLE;
         if (!parse_new_decl(&decl, nullptr, DECLFLAG_FIELD))
             continue;
 
         auto decl_pos = lexer_->pos();
         if (!decl.type.has_postdims && lexer_->peek('(')) {
-            auto fun = new FunctionDecl(decl_pos, decl);
+            auto fun = new MemberFunctionDecl(decl_pos, stmt, decl);
             fun->set_is_stock();
             if (!parse_function(fun, 0, true))
                 continue;
@@ -474,12 +473,12 @@ Parser::parse_enumstruct()
             continue;
         }
 
-        fields.emplace_back(EnumStructField{decl_pos, decl});
+        fields.emplace_back(new LayoutFieldDecl(decl_pos, decl));
 
         lexer_->require_newline(TerminatorPolicy::Semicolon);
     }
 
-    new (&stmt->fields()) PoolArray<EnumStructField>(fields);
+    new (&stmt->fields()) PoolArray<LayoutFieldDecl*>(fields);
     new (&stmt->methods()) PoolArray<FunctionDecl*>(methods);
 
     lexer_->require_newline(TerminatorPolicy::Newline);
@@ -494,7 +493,7 @@ Parser::parse_pstruct()
     Atom* ident = nullptr;
     lexer_->needsymbol(&ident);
 
-    std::vector<StructField> fields;
+    std::vector<LayoutFieldDecl*> fields;
 
     lexer_->need('{');
     do {
@@ -505,7 +504,6 @@ Parser::parse_pstruct()
         }
 
         declinfo_t decl = {};
-        decl.type.ident = iVARIABLE;
 
         lexer_->need(tPUBLIC);
         auto pos = lexer_->pos();
@@ -515,7 +513,7 @@ Parser::parse_pstruct()
         }
 
         if (ident)
-            fields.push_back(StructField(pos, decl.name, decl.type));
+            fields.push_back(new LayoutFieldDecl(pos, decl));
 
         lexer_->require_newline(TerminatorPolicy::NewlineOrSemicolon);
     } while (!lexer_->peek('}'));
@@ -598,8 +596,7 @@ Parser::parse_const(int vclass)
                 break;
             }
             case tLABEL:
-                rt = TypenameInfo{lexer_->current_token()->atom};
-                rt.set_is_label();
+                rt = TypenameInfo(lexer_->current_token()->atom, true);
                 break;
             case tSYMBOL: {
                 auto tok = *lexer_->current_token();
@@ -611,7 +608,7 @@ Parser::parse_const(int vclass)
                     // Otherwise, we got "const X ..." so the tag is int. Give the
                     // symbol back to the lexer so we get it as the name.
                     lexer_->lexpush();
-                    rt = TypenameInfo{0};
+                    rt = TypenameInfo{types_->type_int()};
                 }
                 break;
             }
@@ -652,7 +649,12 @@ Parser::parse_const(int vclass)
 Expr*
 Parser::hier14()
 {
+    ke::SaveAndSet<bool> disallow_empty_array_index(&allow_empty_array_index_, false);
+
     Expr* node = hier13();
+
+    if (!node)
+        return node;
 
     int tok = lexer_->lex();
     auto pos = lexer_->pos();
@@ -861,7 +863,7 @@ Parser::hier2()
 
             TypenameInfo rt;
             if (!parse_new_typename(nullptr, &rt))
-                rt = TypenameInfo{0};
+                rt = TypenameInfo{types_->type_int()};
 
             if (!lexer_->need('['))
                 return nullptr;
@@ -880,38 +882,24 @@ Parser::hier2()
         }
         case tSIZEOF:
         {
-            int parens = 0;
+            ke::SaveAndSet<bool> allow_empty_array_index(&allow_empty_array_index_, true);
+
+            // Manually strip '(' tokens to avoid re-entering hier14 and resetting
+            // the IndexExpr parsing flag.
+            unsigned int nparens = 0;
             while (lexer_->match('('))
-                parens++;
+                nparens++;
 
-            Atom* ident;
-            if (lexer_->match(tTHIS)) {
-                ident = cc_.atom("this");
-            } else {
-                if (!lexer_->needsymbol(&ident))
-                    return nullptr;
+            Expr* inner = hier1();
+            if (!inner)
+                return nullptr;
+
+            while (nparens--) {
+                if (!lexer_->match(')'))
+                    break;
             }
 
-            int array_levels = 0;
-            while (lexer_->match('[')) {
-                array_levels++;
-                lexer_->need(']');
-            }
-
-            Atom* field = nullptr;
-            int token = lexer_->lex();
-            if (token == tDBLCOLON || token == '.') {
-                if (!lexer_->needsymbol(&field))
-                    return nullptr;
-            } else {
-                lexer_->lexpush();
-                token = 0;
-            }
-
-            while (parens--)
-                lexer_->need(')');
-
-            return new SizeofExpr(pos, ident, field, token, array_levels);
+            return new SizeofExpr(pos, inner);
         }
         default:
             lexer_->lexpush();
@@ -967,7 +955,9 @@ Parser::hier1()
             base = new FieldAccessExpr(pos, tok, base, ident);
         } else if (tok == '[') {
             auto pos = lexer_->pos();
-            Expr* inner = hier14();
+            Expr* inner = nullptr;
+            if (!(allow_empty_array_index_ && lexer_->peek(']')))
+                inner = hier14();
             base = new IndexExpr(pos, base, inner);
             lexer_->need(']');
         } else if (tok == '(') {
@@ -1026,7 +1016,7 @@ Parser::constant()
             return new NullExpr(pos);
         case tCHAR_LITERAL:
         case tNUMBER:
-            return new NumberExpr(pos, lexer_->current_token()->value());
+            return new NumberExpr(pos, types_->type_int(), lexer_->current_token()->value());
         case tRATIONAL:
             return new FloatExpr(cc_, pos, lexer_->current_token()->value());
         case tSTRING: {
@@ -1034,11 +1024,11 @@ Parser::constant()
             return new StringExpr(pos, atom);
         }
         case tTRUE:
-            return new TaggedValueExpr(lexer_->pos(), cc_.types()->tag_bool(), 1);
+            return new TaggedValueExpr(lexer_->pos(), types_->type_bool(), 1);
         case tFALSE:
-            return new TaggedValueExpr(lexer_->pos(), cc_.types()->tag_bool(), 0);
+            return new TaggedValueExpr(lexer_->pos(), types_->type_bool(), 0);
         case tINVALID_FUNCTION:
-            return new TaggedValueExpr(lexer_->pos(), cc_.types()->tag_null(), 0);
+            return new TaggedValueExpr(lexer_->pos(), types_->type_null(), 0);
         case '{':
         {
             std::vector<Expr*> exprs;
@@ -1115,7 +1105,7 @@ Parser::parse_view_as()
     TypenameInfo ti;
     {
         if (!parse_new_typename(nullptr, &ti))
-            ti = TypenameInfo{0};
+            ti = TypenameInfo{types_->type_int()};
     }
     lexer_->need('>');
 
@@ -1129,9 +1119,7 @@ Parser::parse_view_as()
     return new CastExpr(pos, tVIEW_AS, ti, expr);
 }
 
-Expr*
-Parser::struct_init()
-{
+Expr* Parser::struct_init() {
     StructExpr* init = new StructExpr(lexer_->pos());
 
     // '}' has already been lexed.
@@ -1154,7 +1142,7 @@ Parser::struct_init()
             }
             case tCHAR_LITERAL:
             case tNUMBER:
-                expr = new NumberExpr(pos, lexer_->current_token()->value());
+                expr = new NumberExpr(pos, types_->type_int(), lexer_->current_token()->value());
                 break;
             case tRATIONAL:
                 expr = new FloatExpr(cc_, pos, lexer_->current_token()->value());
@@ -1256,21 +1244,16 @@ void
 Parser::parse_post_dims(typeinfo_t* type)
 {
     std::vector<Expr*> dim_exprs;
-    bool has_dim_exprs = false;
     do {
-        type->dim.emplace_back(0);
-
         if (lexer_->match(']')) {
             dim_exprs.emplace_back(nullptr);
         } else {
-            has_dim_exprs = true;
             dim_exprs.emplace_back(hier14());
             lexer_->need(']');
         }
     } while (lexer_->match('['));
 
-    if (has_dim_exprs)
-        new (&type->dim_exprs) PoolArray<Expr*>(dim_exprs);
+    new (&type->dim_exprs) PoolArray<Expr*>(dim_exprs);
 }
 
 Stmt*
@@ -1463,7 +1446,7 @@ Stmt* Parser::parse_compound() {
 
     /* repeat until compound statement is closed */
     std::vector<Stmt*> stmts;
-    while (lexer_->match('}') == 0 && !cc_.must_abort()) {
+    while (!lexer_->match('}') && !cc_.must_abort()) {
         if (!lexer_->freading()) {
             report(30) << block_pos.line; /* compound block not closed at end of file */
             break;
@@ -1479,7 +1462,7 @@ Parser::parse_local_decl(int tokid, bool autozero)
 {
     declinfo_t decl = {};
 
-    int declflags = DECLFLAG_VARIABLE | DECLFLAG_ENUMROOT;
+    int declflags = DECLFLAG_VARIABLE;
     if (tokid == tNEW || tokid == tDECL)
         declflags |= DECLFLAG_OLD;
     else if (tokid == tNEWDECL)
@@ -1790,22 +1773,22 @@ Parser::parse_function(FunctionDecl* fun, int tokid, bool has_this)
     return true;
 }
 
-void
-Parser::parse_args(FunctionDecl* fun, std::vector<ArgDecl*>* args)
-{
+void Parser::parse_args(FunctionDecl* fun, std::vector<ArgDecl*>* args) {
     if (lexer_->match(')'))
         return;
 
+    bool is_variadic = false;
     do {
         auto pos = lexer_->pos();
 
         declinfo_t decl = {};
-        if (!parse_decl(&decl, DECLFLAG_ARGUMENT | DECLFLAG_ENUMROOT))
+        if (!parse_decl(&decl, DECLFLAG_ARGUMENT))
             continue;
 
-        if (decl.type.ident == iVARARGS) {
-            if (fun->IsVariadic())
+        if (decl.type.is_varargs) {
+            if (is_variadic)
                 report(401);
+            is_variadic = true;
 
             auto p = new ArgDecl(pos, cc_.atom("..."), decl.type, sARGUMENT, false, false,
                                  false, nullptr);
@@ -1813,7 +1796,7 @@ Parser::parse_args(FunctionDecl* fun, std::vector<ArgDecl*>* args)
             continue;
         }
 
-        if (fun->IsVariadic())
+        if (is_variadic)
             report(402);
 
         Expr* init = nullptr;
@@ -1856,8 +1839,8 @@ Parser::parse_methodmap()
 
     lexer_->need('{');
 
-    std::vector<MethodmapMethod*> methods;
-    std::vector<MethodmapProperty*> props;
+    std::vector<MethodmapMethodDecl*> methods;
+    std::vector<MethodmapPropertyDecl*> props;
     while (!lexer_->match('}')) {
         bool ok = true;
         int tok_id = lexer_->lex();
@@ -1884,16 +1867,14 @@ Parser::parse_methodmap()
         }
     }
 
-    new (&decl->methods()) PoolArray<MethodmapMethod*>(methods);
-    new (&decl->properties()) PoolArray<MethodmapProperty*>(props);
+    new (&decl->methods()) PoolArray<MethodmapMethodDecl*>(methods);
+    new (&decl->properties()) PoolArray<MethodmapPropertyDecl*>(props);
 
     lexer_->require_newline(TerminatorPolicy::NewlineOrSemicolon);
     return decl;
 }
 
-MethodmapMethod*
-Parser::parse_methodmap_method(MethodmapDecl* map)
-{
+MethodmapMethodDecl* Parser::parse_methodmap_method(MethodmapDecl* map) {
     auto pos = lexer_->pos();
 
     bool is_static = lexer_->match(tSTATIC);
@@ -1928,8 +1909,6 @@ Parser::parse_methodmap_method(MethodmapDecl* map)
         // Now, we should get an identifier.
         if (!lexer_->needsymbol(&symbol))
             return nullptr;
-
-        ret_type.type.ident = iVARIABLE;
     }
     ret_type.name = symbol;
 
@@ -1937,7 +1916,10 @@ Parser::parse_methodmap_method(MethodmapDecl* map)
     auto fullname = ke::StringPrintf("%s.%s", map->name()->chars(), symbol->chars());
     auto fqn = cc_.atom(fullname);
 
-    auto fun = new FunctionDecl(pos, ret_type);
+    auto is_ctor = (!is_dtor && map->name() == symbol);
+    auto fun = new MethodmapMethodDecl(pos, ret_type, map, is_ctor, is_dtor);
+    if (is_static)
+        fun->set_is_static();
     fun->set_name(fqn);
 
     if (is_native)
@@ -1945,40 +1927,33 @@ Parser::parse_methodmap_method(MethodmapDecl* map)
     else
         fun->set_is_stock();
 
-    if (map->name() == symbol && ret_type.type.ident != 0) {
+    if (map->name() == symbol && ret_type.type.bindable()) {
         // Keep parsing, as long as we abort before name resolution it's fine.
         report(fun, 434);
     }
 
     bool has_this = false;
-    if (is_dtor || (ret_type.type.ident != 0 && !is_static))
+    if (is_dtor || (ret_type.type.bindable() && !is_static))
         has_this = true;
 
     ke::SaveAndSet<bool> require_newdecls(&lexer_->require_newdecls(), true);
     if (!parse_function(fun, is_native ? tMETHODMAP : 0, has_this))
         return nullptr;
 
-    // Use the short name for the function decl
-    auto method = new MethodmapMethod;
-    method->is_static = is_static;
-    method->is_dtor = is_dtor;
-    method->is_ctor = (!is_dtor && map->name() == symbol);
-    method->decl = fun;
-
     if (is_native)
         lexer_->require_newline(TerminatorPolicy::Semicolon);
     else
         lexer_->require_newline(TerminatorPolicy::Newline);
-    return method;
+    return fun;
 }
 
-MethodmapProperty*
+MethodmapPropertyDecl*
 Parser::parse_methodmap_property(MethodmapDecl* map)
 {
-    auto prop = new MethodmapProperty;
-    prop->pos = lexer_->pos();
+    auto pos = lexer_->pos();
 
-    if (!parse_new_typeexpr(&prop->type, nullptr, 0))
+    typeinfo_t type{};
+    if (!parse_new_typeexpr(&type, nullptr, 0))
         return nullptr;
 
     Atom* ident;
@@ -1987,19 +1962,28 @@ Parser::parse_methodmap_property(MethodmapDecl* map)
     if (!lexer_->need('{'))
         return nullptr;
 
-    prop->name = ident;
+    AutoCountErrors errors;
 
+    MemberFunctionDecl* getter = nullptr;
+    MemberFunctionDecl* setter = nullptr;
     while (!lexer_->match('}')) {
-        if (!parse_methodmap_property_accessor(map, prop))
+        if (!parse_methodmap_property_accessor(map, ident, type, &getter, &setter))
             lexer_->lexclr(TRUE);
+        if (!lexer_->freading()) {
+            if (errors.ok())
+                lexer_->need('}');
+            break;
+        }
     }
 
     lexer_->require_newline(TerminatorPolicy::Newline);
-    return prop;
+    return new MethodmapPropertyDecl(pos, ident, type, getter, setter);
 }
 
-bool
-Parser::parse_methodmap_property_accessor(MethodmapDecl* map, MethodmapProperty* prop)
+bool Parser::parse_methodmap_property_accessor(MethodmapDecl* map, Atom* name,
+                                               const typeinfo_t& type,
+                                               MemberFunctionDecl** out_getter,
+                                               MemberFunctionDecl** out_setter)
 {
     bool is_native = false;
     auto pos = lexer_->pos();
@@ -2026,15 +2010,13 @@ Parser::parse_methodmap_property_accessor(MethodmapDecl* map, MethodmapProperty*
     }
 
     declinfo_t ret_type = {};
-    if (getter) {
-        ret_type.type = prop->type;
-    } else {
-        ret_type.type.set_tag(types_->tag_void());
-        ret_type.type.ident = iVARIABLE;
-    }
+    if (getter)
+        ret_type.type = type;
+    else
+        ret_type.type.set_type(types_->type_void());
 
-    auto fun = new FunctionDecl(pos, ret_type);
-    std::string tmpname = map->name()->str() + "." + prop->name->str();
+    auto fun = new MemberFunctionDecl(pos, map, ret_type);
+    std::string tmpname = map->name()->str() + "." + name->str();
     if (getter)
         tmpname += ".get";
     else
@@ -2049,19 +2031,19 @@ Parser::parse_methodmap_property_accessor(MethodmapDecl* map, MethodmapProperty*
     if (!parse_function(fun, is_native ? tMETHODMAP : 0, true))
         return false;
 
-    if (getter && prop->getter) {
-        report(126) << "getter" << prop->name;
+    if (getter && *out_getter) {
+        report(126) << "getter" << name;
         return false;
     }
-    if (setter && prop->setter) {
-        report(126) << "setter" << prop->name;
+    if (setter && *out_setter) {
+        report(126) << "setter" << name;
         return false;
     }
 
     if (getter)
-        prop->getter = fun;
+        *out_getter = fun;
     else
-        prop->setter = fun;
+        *out_setter = fun;
 
     if (is_native)
         lexer_->require_newline(TerminatorPolicy::Semicolon);
@@ -2116,7 +2098,7 @@ Parser::parse_function_type()
 
     while (!lexer_->match(')')) {
         auto decl = cc_.allocator().alloc<declinfo_t>();
-        decl->type.ident = iVARIABLE;
+        new (decl) declinfo_t();
 
         parse_new_decl(decl, nullptr, DECLFLAG_ARGUMENT);
 
@@ -2154,8 +2136,6 @@ bool
 Parser::parse_decl(declinfo_t* decl, int flags)
 {
     Atom* ident = nullptr;
-
-    decl->type.ident = iVARIABLE;
 
     // Match early varargs as old decl.
     if (lexer_->peek(tELLIPS))
@@ -2198,10 +2178,8 @@ Parser::parse_decl(declinfo_t* decl, int flags)
             //    "y[],"  (old-style)
             parse_post_array_dims(decl, flags);
 
-            if (lexer_->match(tSYMBOL) || lexer_->match('&')) {
-                // This must be a newdecl, "x[] y" or "x[] &y", the latter of which
-                // is illegal, but we flow it through the right path anyway.
-                lexer_->lexpush();
+            if (lexer_->peek(tSYMBOL)) {
+                // This is a new-style declaration.
                 fix_mispredicted_postdims(decl);
                 return parse_new_decl(decl, &ident_tok, flags);
             }
@@ -2212,7 +2190,7 @@ Parser::parse_decl(declinfo_t* decl, int flags)
             // The most basic - "x[]" and that's it. Well, we know it has no tag and
             // we know its name. We might as well just complete the entire decl.
             decl->name = ident;
-            decl->type.set_tag(0);
+            decl->type.set_type(types_->type_int());
             return true;
         }
 
@@ -2225,30 +2203,22 @@ Parser::parse_decl(declinfo_t* decl, int flags)
     return parse_new_decl(decl, NULL, flags);
 }
 
-void
-Parser::fix_mispredicted_postdims(declinfo_t* decl)
-{
+void Parser::fix_mispredicted_postdims(declinfo_t* decl) {
     assert(decl->type.has_postdims);
-    assert(decl->type.ident == iARRAY);
 
     decl->type.has_postdims = false;
 
-    // We got a declaration like:
-    //      int[3] x;
+    // Check for a declaration like:
+    //
+    //      Blah[3] x;
     //
     // This is illegal, so report it now, and strip dim_exprs.
-    if (!decl->type.dim_exprs.empty()) {
-        for (int i = 0; i < decl->type.dim_exprs.size(); i++) {
-            if (decl->type.dim_exprs[i]) {
-                report(decl->type.dim_exprs[i]->pos(), 101);
-                break;
-            }
+    for (int i = 0; i < decl->type.dim_exprs.size(); i++) {
+        if (decl->type.dim_exprs[i]) {
+            report(decl->type.dim_exprs[i]->pos(), 101);
+            break;
         }
-        decl->type.dim_exprs = {};
     }
-
-    // If has_postdims is false, we never want to report an iARRAY.
-    decl->type.ident = iREFARRAY;
 }
 
 bool
@@ -2262,12 +2232,12 @@ Parser::parse_old_decl(declinfo_t* decl, int flags)
         type->is_const = true;
     }
 
-    TypenameInfo ti = TypenameInfo(0);
+    TypenameInfo ti = TypenameInfo(types_->type_int());
 
     int numtags = 0;
     if (flags & DECLFLAG_ARGUMENT) {
         if (lexer_->match('&'))
-            type->ident = iREFERENCE;
+            type->reference = true;
 
         // grammar for multitags is:
         //   multi-tag ::= '{' (symbol (',' symbol)*)? '}' ':'
@@ -2304,7 +2274,7 @@ Parser::parse_old_decl(declinfo_t* decl, int flags)
 
     // Look for varargs and end early.
     if (lexer_->match(tELLIPS)) {
-        type->ident = iVARARGS;
+        type->is_varargs = true;
         return TRUE;
     }
 
@@ -2355,7 +2325,7 @@ Parser::parse_new_decl(declinfo_t* decl, const full_token_t* first, int flags)
 
     if (flags & DECLMASK_NAMED_DECL) {
         if ((flags & DECLFLAG_ARGUMENT) && lexer_->match(tELLIPS)) {
-            decl->type.ident = iVARARGS;
+            decl->type.is_varargs = true;
             return true;
         }
 
@@ -2370,7 +2340,7 @@ Parser::parse_new_decl(declinfo_t* decl, const full_token_t* first, int flags)
 
     if (flags & DECLMASK_NAMED_DECL) {
         if (lexer_->match('[')) {
-            if (decl->type.numdim() == 0)
+            if (decl->type.dim_exprs.empty())
                 parse_post_array_dims(decl, flags);
             else
                 report(121);
@@ -2434,20 +2404,12 @@ Parser::reparse_new_decl(declinfo_t* decl, int flags)
     if (lexer_->match(tSYMBOL))
         decl->name = lexer_->current_token()->atom;
 
-    if (decl->type.declared_tag && !decl->type.tag()) {
-        assert(decl->type.numdim() > 0);
-        decl->type.dim.pop_back();
-    }
-
-    decl->type.dim_exprs = {};
-
     if (decl->type.has_postdims) {
         // We have something like:
         //    int x[], y...
         //
         // Reset the fact that we saw an array.
-        decl->type.dim.clear();
-        decl->type.ident = iVARIABLE;
+        decl->type.dim_exprs = {};
         decl->type.has_postdims = false;
         if (lexer_->match('[')) {
             // int x[], y[]
@@ -2456,7 +2418,7 @@ Parser::reparse_new_decl(declinfo_t* decl, int flags)
         }
     } else {
         if (lexer_->match('[')) {
-            if (decl->type.numdim() > 0) {
+            if (!decl->type.dim_exprs.empty()) {
                 // int[] x, y[]
                 //           ^-- not allowed
                 report(121);
@@ -2465,13 +2427,13 @@ Parser::reparse_new_decl(declinfo_t* decl, int flags)
             // int x, y[]
             //         ^-- parse this
             parse_post_array_dims(decl, flags);
-        } else if (decl->type.numdim()) {
+        } else if (!decl->type.dim_exprs.empty()) {
             // int[] x, y
             //          ^-- still an array, because the type is int[]
             //
             // Dim count should be 0 but we zap it anyway.
-            for (auto& dim : decl->type.dim)
-                dim = 0;
+            for (auto& expr : decl->type.dim_exprs)
+                expr = nullptr;
         }
     }
 
@@ -2484,7 +2446,6 @@ Parser::reparse_old_decl(declinfo_t* decl, int flags)
     bool is_const = decl->type.is_const;
 
     *decl = {};
-    decl->type.ident = iVARIABLE;
     decl->type.is_const = is_const;
 
     return parse_old_decl(decl, flags);
@@ -2496,14 +2457,11 @@ Parser::parse_post_array_dims(declinfo_t* decl, int flags)
     typeinfo_t* type = &decl->type;
 
     // Illegal declaration (we'll have a name since ref requires decl).
-    if (type->ident == iREFERENCE)
+    if (type->reference)
         report(67) << decl->name;
 
     parse_post_dims(type);
 
-    // We can't deduce iARRAY vs iREFARRAY until the analysis phase. Start with
-    // iARRAY for now.
-    decl->type.ident = iARRAY;
     decl->type.has_postdims = TRUE;
 }
 
@@ -2530,10 +2488,11 @@ Parser::parse_new_typeexpr(typeinfo_t* type, const full_token_t* first, int flag
     type->set_type(ti);
 
     // Note: we could have already filled in the prefix array bits, so we check
-    // that ident != iARRAY before looking for an open bracket.
-    if (type->ident != iARRAY && lexer_->match('[')) {
+    // whether we already have dimensions before parsing more.
+    if (type->dim_exprs.empty() && lexer_->match('[')) {
+        std::vector<Expr*> dims;
         do {
-            type->dim.emplace_back(0);
+            dims.emplace_back(nullptr);
             if (!lexer_->match(']')) {
                 report(101);
 
@@ -2542,15 +2501,15 @@ Parser::parse_new_typeexpr(typeinfo_t* type, const full_token_t* first, int flag
                 lexer_->match(']');
             }
         } while (lexer_->match('['));
-        type->ident = iREFARRAY;
+        new (&type->dim_exprs) PoolArray<Expr*>(dims);
     }
 
     if (flags & DECLFLAG_ARGUMENT) {
         if (lexer_->match('&')) {
-            if (type->ident == iARRAY || type->ident == iREFARRAY)
+            if (!type->dim_exprs.empty())
                 report(137);
             else
-                type->ident = iREFERENCE;
+                type->reference = true;
         }
     }
 
@@ -2569,46 +2528,46 @@ Parser::parse_new_typename(const full_token_t* tok, TypenameInfo* out)
 
     switch (tok->id) {
         case tINT:
-            *out = TypenameInfo{0};
+            *out = TypenameInfo{types_->type_int()};
             return true;
         case tCHAR:
-            *out = TypenameInfo{types_->tag_string()};
+            *out = TypenameInfo{types_->type_char()};
             return true;
         case tVOID:
-            *out = TypenameInfo{types_->tag_void()};
+            *out = TypenameInfo{types_->type_void()};
             return true;
         case tOBJECT:
-            *out = TypenameInfo{types_->tag_object()};
+            *out = TypenameInfo{types_->type_object()};
             return true;
         case tLABEL:
         case tSYMBOL:
             if (tok->id == tLABEL)
                 report(120);
             if (tok->atom->str() == "float") {
-                *out = TypenameInfo{types_->tag_float()};
+                *out = TypenameInfo{types_->type_float()};
                 return true;
             }
             if (tok->atom->str() == "bool") {
-                *out = TypenameInfo{types_->tag_bool()};
+                *out = TypenameInfo{types_->type_bool()};
                 return true;
             }
             if (tok->atom->str() == "Float") {
                 report(98) << "Float" << "float";
-                *out = TypenameInfo{types_->tag_float()};
+                *out = TypenameInfo{types_->type_float()};
                 return true;
             }
             if (tok->atom->str() == "String") {
                 report(98) << "String" << "char";
-                *out = TypenameInfo{types_->tag_string()};
+                *out = TypenameInfo{types_->type_string()};
                 return true;
             }
             if (tok->atom->str() == "_") {
                 report(98) << "_" << "int";
-                *out = TypenameInfo{0};
+                *out = TypenameInfo{types_->type_int()};
                 return true;
             }
             if (tok->atom->str() == "any") {
-                *out = TypenameInfo(types_->tag_any());
+                *out = TypenameInfo(types_->type_any());
                 return true;
             }
             *out = TypenameInfo(tok->atom, tok->id == tLABEL);
@@ -2644,4 +2603,5 @@ Parser::nextop(int* opidx, const int* list)
     return FALSE; /* entire list scanned, nothing found */
 }
 
+} // namespace cc
 } // namespace sp

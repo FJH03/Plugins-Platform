@@ -125,6 +125,41 @@ static cell_t PrintNums(IPluginContext* cx, const cell_t* params)
   return 1;
 }
 
+static cell_t Printf(IPluginContext* cx, const cell_t* params) {
+  char* p;
+  cx->LocalToString(params[1], &p);
+
+  size_t index = 1;
+  while (*p) {
+    if (*p == '%') {
+      char next = *(p + 1);
+      if (next == 's' || next == 'd' || next == 'f') {
+        index++;
+        if (index > params[0])
+          return cx->ThrowNativeError("Wrong number of arguments");
+
+        cell_t* addr;
+        if (int err = cx->LocalToPhysAddr(params[index], &addr); err != SP_ERROR_NONE)
+          return cx->ThrowNativeErrorEx(err, "Could not read argument");
+
+        if (next == 's')
+          fputs(reinterpret_cast<const char*>(addr), stdout);
+        else if (next == 'f')
+          fprintf(stdout, "%f", *reinterpret_cast<float*>(addr));
+        else if (next == 'd')
+          fprintf(stdout, "%d", *addr);
+
+        p += 2;
+        continue;
+      }
+    }
+
+    fputc(*p, stdout);
+    p++;
+  }
+  return 1;
+}
+
 static cell_t DoNothing(IPluginContext* cx, const cell_t* params)
 {
   return 1;
@@ -273,6 +308,43 @@ static cell_t Copy2dArrayToCallback(IPluginContext* cx, const cell_t* params)
   return 0;
 }
 
+#pragma pack(push, 1)
+struct TestStruct {
+  cell_t x;
+  cell_t y;
+};
+#pragma pack(pop)
+
+static cell_t PrintTestStruct(IPluginContext* cx, const cell_t* params) {
+  TestStruct* ts;
+
+  int err;
+  if ((err = cx->LocalToPhysAddr(params[1], reinterpret_cast<cell_t**>(&ts))) != SP_ERROR_NONE)
+    return cx->ThrowNativeErrorEx(err, "Could not read argument 1");
+
+  printf("x: %d\n", ts->x);
+  printf("y: %d\n", ts->y);
+  return 0;
+}
+
+static cell_t AddTestStructs(IPluginContext* cx, const cell_t* params) {
+  TestStruct* a;
+  TestStruct* b;
+  TestStruct* out;
+
+  int err;
+  if ((err = cx->LocalToPhysAddr(params[1], reinterpret_cast<cell_t**>(&out))) != SP_ERROR_NONE)
+    return cx->ThrowNativeErrorEx(err, "Could not read out argument");
+  if ((err = cx->LocalToPhysAddr(params[2], reinterpret_cast<cell_t**>(&a))) != SP_ERROR_NONE)
+    return cx->ThrowNativeErrorEx(err, "Could not read argument 1");
+  if ((err = cx->LocalToPhysAddr(params[3], reinterpret_cast<cell_t**>(&b))) != SP_ERROR_NONE)
+    return cx->ThrowNativeErrorEx(err, "Could not read argument 2");
+
+  out->x = a->x + b->x;
+  out->y = a->y + b->y;
+  return params[1];
+}
+
 class DynamicNative : public INativeCallback
 {
   public:
@@ -298,6 +370,16 @@ class DynamicNative : public INativeCallback
   private:
     uintptr_t refcount_ = 0;
 };
+
+#pragma pack(push, 1)
+struct LayoutVerifier {
+  char message[CharArraySize<50>::bytes];
+  int x;
+};
+#pragma pack(pop)
+
+static_assert(offsetof(LayoutVerifier, message) == 0);
+static_assert(offsetof(LayoutVerifier, x) == 52);
 
 static int Execute(const char* file)
 {
@@ -330,6 +412,9 @@ static int Execute(const char* file)
   BindNative(rt, "copy_2d_array_to_callback", Copy2dArrayToCallback);
   BindNative(rt, "call_with_string", CallWithString);
   BindNative(rt, "assert_eq", AssertEq);
+  BindNative(rt, "printf", Printf);
+  BindNative(rt, "print_test_struct", PrintTestStruct);
+  BindNative(rt, "add_test_structs", AddTestStructs);
 
   IPluginFunction* fun = rt->GetFunctionByName("main");
   if (!fun)
@@ -411,6 +496,9 @@ int main(int argc, char** argv)
 
   if (getenv("VALIDATE_DEBUG_SECTIONS") || validate_debug_sections.value())
     sEnv->EnableDebugBreak();
+
+  if (getenv("SPEW_INTERP_OPS"))
+    sEnv->set_spew_interp_ops(true);
 
   ShellDebugListener debug;
   sEnv->SetDebugger(&debug);
