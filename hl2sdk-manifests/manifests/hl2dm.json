@@ -9,13 +9,12 @@
     },
     "platforms": {
         "windows": [
-            "x86"
+            "x86",
+            "x86_64"
         ],
         "linux": [
-            "x86"
-        ],
-        "mac": [
-            "x86"
+            "x86",
+            "x86_64"
         ]
     },
     "source2": false,
@@ -34,44 +33,54 @@
     "linux": {
         "defines": [
             "NO_HOOK_MALLOC",
-            "NO_MALLOC_OVERRIDE"
+            "NO_MALLOC_OVERRIDE",
+            "HL2_DLL",
+            "HL2MP"
+        ],
+        "cflags": [
+            "-Wno-overloaded-virtual",
+            "-Wno-unused-function",
+            "-Wno-unknown-pragmas",
+            "-Wno-dangling-else",
+            "-Wno-unused-variable",
+            "-Wno-unused-private-field",
+            "-Wno-inconsistent-missing-override",
+            "-Wno-tautological-overlap-compare",
+            "-Wno-tautological-constant-out-of-range-compare",
+            "-Wno-undefined-bool-conversion",
+            "-fPIC"
         ],
         "x86": {
-            "postlink_libs": [
-                "lib/linux/mathlib_i486.a",
-                "lib/linux/tier1_i486.a"
-            ],
+            "cflags": ["-march=pentium4", "-march=core2", "-msse2", "-mfpmath=sse"],
             "dynamic_libs": [
-                "lib/linux/libtier0_srv.so",
-                "lib/linux/libvstdlib_srv.so"
+                "lib/public/linux/libtier0_srv.so",
+                "lib/public/linux/libvstdlib_srv.so"
+            ]
+        },
+        "x86_64": {
+            "cflags": ["-march=nocona", "-march=core2"],
+            "dynamic_libs": [
+                "lib/public/linux64/libtier0_srv.so",
+                "lib/public/linux64/libvstdlib_srv.so"
             ]
         },
         "uses_system_cxxlib": false
     },
-    "mac": {
+    "windows": {
         "defines": [
-            "NO_HOOK_MALLOC",
-            "NO_MALLOC_OVERRIDE"
+            "HL2_DLL",
+            "HL2MP"
         ],
         "x86": {
-            "postlink_libs": [
-                "lib/mac/mathlib_i486.a",
-                "lib/mac/tier1_i486.a"
-            ],
-            "dynamic_libs": [
-                "lib/mac/libtier0.dylib",
-                "lib/mac/libvstdlib.dylib"
+            "libs": [
+                "lib/public/x86/tier0.lib",
+                "lib/public/x86/vstdlib.lib"
             ]
         },
-        "cxxlib": "c++"
-    },
-    "windows": {
-        "x86": {
+        "x86_64": {
             "libs": [
-                "lib/public/mathlib.lib",
-                "lib/public/tier0.lib",
-                "lib/public/tier1.lib",
-                "lib/public/vstdlib.lib"
+                "lib/public/x64/tier0.lib",
+                "lib/public/x64/vstdlib.lib"
             ]
         }
     }
