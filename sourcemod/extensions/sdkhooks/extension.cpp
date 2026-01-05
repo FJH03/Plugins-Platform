@@ -251,6 +251,10 @@ bool SDKHooks::SDK_OnLoad(char *error, size_t maxlength, bool late)
 	addr = NULL;
 	if (g_pGameConf->GetMemSig("RemoveListenerEntity", &addr) && addr)
 		g_pRemoveListenerEntity = (RemoveListenerEntityFn)addr;
+	else
+	{
+		g_pSM->LogMessage(myself, "RemoveListenerEntity signature not found; entity listener unregistration will be skipped.");
+	}
 
 	if (!g_pAddListenerEntity)
 	{
