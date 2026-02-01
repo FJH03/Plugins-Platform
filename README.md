@@ -1,7 +1,7 @@
 Build instructions
 ------------------
 
-Make sure ambuild2 is installed: https://github.com/alliedmodders/ambuild
+Make sure ambuild2 is installed: https://github.com/FJH03/ambuild
 
 Metamod:Source
 ==============
