@@ -54,21 +54,21 @@
 			"RoundRespawn"
 			{
 				"library"	"server"
-				"windows64"	"\x48\x89\x4C\x24\x08\x48\x83\xEC\x28\x48\x8B\x44\x24\x30\x48\x8B\x00\x48\x8B\x4C\x24\x30\xFF\x90\x90\x0B\x00\x00"
+				"windows64"	"@SMGD_RoundRespawn"
 				"linux64"		"@_ZN9CCSPlayer12RoundRespawnEv"
 			}
 			// String: "CCSPlayer::SwitchTeam( %d ) - invalid team index."
 			"SwitchTeam"
 			{
 				"library"	"server"
-				"windows64"	"\x89\x54\x24\x10\x48\x89\x4C\x24\x08\x48\x81\xEC\x88\x00\x00\x00\x8B\x8C\x24\x98\x00\x00\x00"
+				"windows64"	"@SMGD_SwitchTeam"
 				"linux64"		"@_ZN9CCSPlayer10SwitchTeamEi"
 			}
 			// String: "#Alias_Not_Avail"
 			"HandleCommand_Buy_Internal"
 			{
 				"library"		"server"
-				"windows64"		"\x48\x89\x54\x24\x10\x48\x89\x4C\x24\x08\x48\x81\xEC\xB8\x00\x00\x00\x33\xD2"
+				"windows64"		"@SMGD_HandleCommand_Buy_Internal"
 				"linux64"			"@_ZN9CCSPlayer26HandleCommand_Buy_InternalEPKc"
 			}
 			// After having located "HandleCommand_Buy_Internal"
@@ -78,21 +78,21 @@
 			"GetWeaponPrice"
 			{
 				"library"		"server"
-				"windows64"		"\x8B\x81\x3C\x09\x00\x00"
+				"windows64"		"@SMGD_GetWeaponPrice"
 				"linux64"			"@_ZNK13CCSWeaponInfo14GetWeaponPriceEv"
 			}
 			// String: "ValveBiped.Bip01_R_Hand"
 			"CSWeaponDrop"//Wildcard first 6 bytes for CS:S DM
 			{
 				"library"		"server"
-				"windows64"		"\x44\x88\x4C\x24\x20\x44\x88\x44\x24\x18\x48\x89\x54\x24\x10\x48\x89\x4C\x24\x08\x56"
+				"windows64"		"@SMGD_CSWeaponDrop"
 				"linux64"			"@_ZN9CCSPlayer12CSWeaponDropEP17CBaseCombatWeaponbb"
 			}
 			// String: "CTsWin"
 			"TerminateRound"
 			{
 				"library"		"server"
-				"windows64"		"\x48\x8B\xC4\x44\x89\x40\x18\x55"
+				"windows64"		"@SMGD_TerminateRound"
 				"linux64"			"@_ZN12CCSGameRules14TerminateRoundEfi"
 			}
 			// String: "d3au1" follow the xref to the array
@@ -101,7 +101,7 @@
 			"GetTranslatedWeaponAlias"
 			{
 				"library"		"server"
-				"windows64"		"\x48\x89\x5C\x24\x08\x48\x89\x6C\x24\x10\x48\x89\x74\x24\x18\x57\x48\x83\xEC\x20\x48\x8D\x2D\x35\xD9\x42\x00"
+				"windows64"		"@SMGD_GetTranslatedWeaponAlias"
 				"linux64"			"@_Z24GetTranslatedWeaponAliasPKc"
 			}
 			// String: "weapon_assaultsuit" follow the xref to the array, first element should be "weapon_p228"
@@ -109,7 +109,7 @@
 			"GetWeaponInfo"
 			{
 				"library"		"server"
-				"windows64"		"\x40\x53\x48\x83\xEC\x30\x48\x63\xD1"
+				"windows64"		"@SMGD_GetWeaponInfo"
 				"linux64"			"@_Z13GetWeaponInfo10CSWeaponID"
 			}
 			// String: "ClanTagChanged" follow the xref, there should be conditional jump to a node with 4 subroutines call and one virtual function call
@@ -117,7 +117,7 @@
 			"SetClanTag"
 			{
 				"library"	"server"
-				"windows64"	"\x48\x89\x54\x24\x10\x48\x89\x4C\x24\x08\x48\x83\xEC\x28\x48\x83\x7C\x24\x38\x00\x74\x2A\x48\x8B\x44\x24\x30"
+				"windows64"	"@SMGD_SetClanTag"
 				"linux64"		"@_ZN9CCSPlayer10SetClanTagEPKc"
 			}
 			// String: "p228" the xref should you to an array that's being used in two subroutines, where the increment is * 8
@@ -125,13 +125,13 @@
 			"AliasToWeaponID"
 			{
 				"library"	"server"
-				"windows64"	"\x48\x89\x5C\x24\x08\x48\x89\x74\x24\x10\x57\x48\x83\xEC\x20\x48\x8B\xF1\x48\x85\xC9\x74\x2A"
+				"windows64"	"@SMGD_AliasToWeaponID"
 				"linux64"		"@_Z15AliasToWeaponIDPKc"
 			}
 			"WeaponIDToAlias"
 			{
 				"library"	"server"
-				"windows64"	"\x4C\x8D\x05\x29\xEB\x63\x00"
+				"windows64"	"@SMGD_WeaponIDToAlias"
 				"linux64"		"@_Z15WeaponIDToAliasi"
 			}
 			// String: "Team \"CT\" triggered \"Intermission_Win_Limit\"\n"
@@ -139,7 +139,7 @@
 			"CheckWinLimit"
 			{
 				"library"	"server"
-				"windows64"	"\x48\x89\x5C\x24\x08\x48\x89\x74\x24\x10\x57\x48\x83\xEC\x20\x48\x8B\x05\xF2\x61\x7B\x00"
+				"windows64"	"@SMGD_CheckWinLimit"
 				"linux64"		"@_ZN12CCSGameRules13CheckWinLimitEv"
 			}
 			// [Windwos] Search string: "#Hint_you_are_the_vip", you will find function: void CCSPlayer::Spawn(). From the top, look 4th ´call´ instruction, that should be = void CCSPlayer::SetModelFromClass( void )
@@ -147,7 +147,7 @@
 			"SetModelFromClass"
 			{
 				"library"	"server"
-				"windows64"	"\x48\x89\x4C\x24\x08\x48\x81\xEC\x88\x00\x00\x00\x48\x8B\x8C\x24\x90\x00\x00\x00"
+				"windows64"	"@SMGD_SetModelFromClass"
 				"linux64"		"@_ZN9CCSPlayer17SetModelFromClassEv"
 			}
 		}

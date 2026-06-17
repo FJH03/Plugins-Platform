@@ -79,7 +79,7 @@
 			{
 				/* String: "(%0.2f) output: (%s,%s) -> (%s,%s)(%s)" */
 				"library"	"server"
-				"windows64"	"\x48\x8B\xC4\x48\x89\x58\x10\x55\x56\x57\x41\x54\x41\x55\x41\x56\x41\x57\x48\x81\xEC\xF0\x01\x00\x00"
+				"windows64"	"@SMGD_FireOutput"
 				"linux64"	"@_ZN17CBaseEntityOutput10FireOutputE9variant_tP11CBaseEntityS2_f"
 			}
 		}

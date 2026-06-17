@@ -7,13 +7,13 @@
 			"AddListenerEntity"
 			{
 				"library"   "server"
-				"windows64"  "\x48\x89\x54\x24\x10\x48\x83\xEC\x28\x4C\x8D\x91\x38\x00\x02\x00"
+				"windows64"  "@SMGD_AddListenerEntity"
 				"linux64"   "@_ZN17CGlobalEntityList17AddListenerEntityEP15IEntityListener"
 			}
 			"RemoveListenerEntity"
 			{
 				"library"   "server"
-				"windows64"  "\x40\x53\x48\x83\xEC\x20\x44\x8B\x89\x48\x00\x02\x00\x33\xC0\x48\x8B\xD9\x45\x85\xC9\x7E\x2A\x4C\x8B\x81\x38\x00\x02\x00\x66\x90\x49\x39\x10\x74\x11\xFF\xC0\x49\x83\xC0\x08\x41\x3B\xC1\x7C\xF0\x48\x83\xC4\x20\x5B\xC3"
+				"windows64"  "@SMGD_RemoveListenerEntity"
 				"linux64"   "@_ZN17CGlobalEntityList20RemoveListenerEntityEP15IEntityListener"
 			}
 		}
