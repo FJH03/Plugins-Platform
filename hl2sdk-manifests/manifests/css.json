@@ -9,26 +9,25 @@
     },
     "platforms": {
         "windows": [
-            "x86",
             "x86_64"
         ],
         "linux": [
-            "x86",
             "x86_64"
         ]
     },
     "source2": false,
     "include_paths": [
-        "public",
-        "public/engine",
-        "public/mathlib",
-        "public/vstdlib",
-        "public/tier0",
-        "public/tier1",
-        "public/toolframework",
-        "public/game/server",
-        "game/shared",
-        "common"
+        "source-engine-czero/public",
+        "source-engine-czero/public/engine",
+        "source-engine-czero/public/mathlib",
+        "source-engine-czero/public/vstdlib",
+        "source-engine-czero/public/tier0",
+        "source-engine-czero/public/tier1",
+        "source-engine-czero/public/toolframework",
+        "source-engine-czero/public/game/server",
+        "source-engine-czero/game/server",
+        "source-engine-czero/game/shared",
+        "source-engine-czero/common"
     ],
     "linux": {
         "defines": [
@@ -49,36 +48,26 @@
             "-Wno-undefined-bool-conversion",
             "-fPIC"
         ],
-        "x86": {
-            "cflags": ["-march=pentium4", "-march=core2", "-msse2", "-mfpmath=sse"],
-            "dynamic_libs": [
-                "lib/public/linux/libtier0_srv.so",
-                "lib/public/linux/libvstdlib_srv.so"
-            ]
-        },
         "x86_64": {
             "cflags": ["-march=nocona", "-march=core2"],
             "dynamic_libs": [
-                "lib/public/linux64/libtier0_srv.so",
-                "lib/public/linux64/libvstdlib_srv.so"
+                "source-engine-czero/lib/public/linux64/libtier0_srv.so",
+                "source-engine-czero/lib/public/linux64/libvstdlib_srv.so"
             ]
         },
         "uses_system_cxxlib": false
     },
     "windows": {
         "defines": [
-            "CSTRIKE_DLL"
+            "CSTRIKE_DLL",
+            "MEMHELPERS_H"
         ],
-        "x86": {
-            "libs": [
-                "lib/public/x86/tier0.lib",
-                "lib/public/x86/vstdlib.lib"
-            ]
-        },
         "x86_64": {
             "libs": [
-                "lib/public/x64/tier0.lib",
-                "lib/public/x64/vstdlib.lib"
+                "source-engine-czero/build/tier0/tier0.lib",
+                "source-engine-czero/build/vstdlib/vstdlib.lib",
+                "source-engine-czero/build/mathlib/mathlib.lib",
+                "source-engine-czero/build/tier1/tier1.lib"
             ]
         }
     }

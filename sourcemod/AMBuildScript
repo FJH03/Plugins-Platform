@@ -36,6 +36,35 @@ SdkHelpers = builder.Eval('../hl2sdk-manifests/SdkHelpers.ambuild', {
     'Project': 'sourcemod'
 })
 
+# Hardcoded SE_* constant mapping (code from sourcemod/manifests/)
+# This eliminates the need to load all manifest JSON files at build time.
+SE_DEFINES = {
+    'EPISODEONE':     1,
+    'DARKMESSIAH':    2,
+    'ORANGEBOX':      3,
+    'BLOODYGOODTIME': 4,
+    'EYE':            5,
+    'CSS':            6,
+    'HL2DM':          7,
+    'DODS':           8,
+    'SDK2013':        9,
+    'PVKII':         10,
+    'BMS':           11,
+    'LEFT4DEAD':     13,
+    'NUCLEARDAWN':   14,
+    'CONTAGION':     15,
+    'LEFT4DEAD2':    16,
+    'ALIENSWARM':    17,
+    'PORTAL2':       18,
+    'BLADE':         19,
+    'INSURGENCY':    20,
+    'DOI':           21,
+    'MCV':           22,
+    'CSGO':          23,
+    'DOTA':          24,
+    'MOCK':          26,
+}
+
 class SMConfig(object):
   def __init__(self):
     self.sdk_manifests = []
@@ -535,8 +564,7 @@ class SMConfig(object):
       os.path.join(self.mms_root, 'core', 'sourcehook'),
     ]
 
-    for other_sdk in self.sdk_manifests:
-      compiler.defines += ['SE_{}={}'.format(other_sdk['define'], other_sdk['code'])]
+    compiler.defines += ['SE_{}={}'.format(k, v) for k, v in SE_DEFINES.items()]
 
     SdkHelpers.configureCxx(context, binary, sdk)
 
