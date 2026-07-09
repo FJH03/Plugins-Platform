@@ -309,7 +309,11 @@ bool UpdateRegisterArgumentSizes(CHook* pDetour, HookSetup *setup)
 	std::vector<DataTypeSized_t> &argTypes = callingConvention->m_vecArgTypes;
 	int numArgs = argTypes.size();
 
-	for (int i = 0; i < numArgs; i++)
+	int firstArg = 0;
+	if (setup->callConv == CallConv_THISCALL)
+		firstArg = 1;
+
+	for (int i = firstArg; i < numArgs; i++)
 	{
 		// Ignore regular arguments on the stack.
 		if (argTypes[i].custom_register == None)
@@ -321,7 +325,8 @@ bool UpdateRegisterArgumentSizes(CHook* pDetour, HookSetup *setup)
 			return false;
 
 		argTypes[i].size = reg->m_iSize;
-		setup->params[i].size = reg->m_iSize;
+		setup->params[i - firstArg].size = reg->m_iSize;
+		setup->params[i - firstArg].custom_register = argTypes[i].custom_register;
 	}
 
 	return true;
@@ -650,11 +655,21 @@ HookParamsStruct *CDynamicHooksSourcePawn::GetParamStruct()
 	params->newParams = (void **)malloc(paramsSize);
 	params->isChanged = (bool *)malloc(numArgs * sizeof(bool));
 
-	// Save old stack parameters.
+	// Save old stack parameters (excluding shadow space).
 	if (stackSize > 0)
 	{
-		void *pArgPtr = m_pDetour->m_pCallingConvention->GetStackArgumentPtr(m_pDetour->m_pRegisters);
-		memcpy(params->orgParams, pArgPtr, stackSize);
+		// Only copy actual stack args, not shadow space.
+		size_t actualStack = 0;
+		for (size_t j = 0; j < numArgs; j++)
+		{
+			if (argTypes[j].custom_register == None)
+				actualStack += argTypes[j].size;
+		}
+		if (actualStack > 0)
+		{
+			void *pArgPtr = m_pDetour->m_pCallingConvention->GetStackArgumentPtr(m_pDetour->m_pRegisters);
+			memcpy(params->orgParams, pArgPtr, actualStack);
+		}
 	}
 
 	memset(params->newParams, 0, paramsSize);
@@ -666,7 +681,13 @@ HookParamsStruct *CDynamicHooksSourcePawn::GetParamStruct()
 		firstArg = 1;
 
 	// Save the old parameters passed in a register.
-	size_t offset = stackSize;
+	// Calculate register offset without shadow space to match GetRegisterParamOffset.
+	size_t offset = 0;
+	for (size_t j = 0; j < numArgs; j++)
+	{
+		if (argTypes[j].custom_register == None)
+			offset += argTypes[j].size;
+	}
 	for (size_t i = firstArg; i < numArgs; i++)
 	{
 		// We already saved the stack arguments.
@@ -691,19 +712,24 @@ void CDynamicHooksSourcePawn::UpdateParamsFromStruct(HookParamsStruct *params)
 		return;
 
 	ICallingConvention* callingConvention = m_pDetour->m_pCallingConvention;
-	size_t stackSize = callingConvention->GetArgStackSize();
 	std::vector<DataTypeSized_t> &argTypes = callingConvention->m_vecArgTypes;
 	size_t numArgs = argTypes.size();
 
 	size_t firstArg = 0;
-	// TODO: Support custom register for this ptr.
 	if (callConv == CallConv_THISCALL)
 		firstArg = 1;
+
 	size_t stackOffset = 0;
-	// Values of arguments stored in registers are saved after the stack arguments.
-	size_t registerOffset = stackSize;
+	// Calculate register offset without shadow space to match GetRegisterParamOffset.
+	size_t registerOffset = 0;
+	for (size_t j = 0; j < numArgs; j++)
+	{
+		if (argTypes[j].custom_register == None)
+			registerOffset += argTypes[j].size;
+	}
+
 	size_t offset;
-	for (size_t i = 0; i < numArgs; i++)
+	for (size_t i = firstArg; i < numArgs; i++)
 	{
 		size_t size = argTypes[i].size;
 		// Only have to copy something if the plugin changed this parameter.
@@ -713,7 +739,7 @@ void CDynamicHooksSourcePawn::UpdateParamsFromStruct(HookParamsStruct *params)
 			offset = argTypes[i].custom_register == None ? stackOffset : registerOffset;
 
 			void *paramAddr = (void *)((intptr_t)params->newParams + offset);
-			void *stackAddr = callingConvention->GetArgumentPtr(i + firstArg, m_pDetour->m_pRegisters);
+			void *stackAddr = callingConvention->GetArgumentPtr(i, m_pDetour->m_pRegisters);
 			memcpy(stackAddr, paramAddr, size);
 		}
 

@@ -431,16 +431,22 @@ void CHook::CreatePostCallback()
 	GCC_ONLY(jit.lea(rsi, rsp()));
 	MSVC_ONLY(jit.lea(rdx, rsp(40)));
 
-	// Call GetReturnAddress
+	// Call GetReturnAddress (会冲掉 RAX)
 	jit.mov(rax, func.address);
 	jit.call(rax);
 
 	// Free shadow space
 	MSVC_ONLY(jit.add(rsp, 40));
 
+	// rax 现在是返回地址，存到 r10
+	// 然后从寄存器缓冲区重新加载正确的返回值到 rax
+	jit.mov(r10, rax);
+	jit.mov(rax, reinterpret_cast<std::uint64_t>(m_pRegisters->m_rax->m_pAddress));
+	jit.mov(rax, rax());
+
 	// Jump to the original return address
 	jit.add(rsp, 8);
-	jit.jump(rax);
+	jit.jump(r10);
 }
 
 void CHook::Write_CallHandler(x64JitWriter& jit, HookType_t type)
