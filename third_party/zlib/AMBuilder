@@ -2,9 +2,6 @@
 import os
 
 library = Root.StaticLibrary(builder, 'z')
-library.compiler.includes += [
-  os.path.join(builder.currentSourcePath, '..', 'third_party'),
-]
 library.sources += [
   'adler32.c',
   'compress.c',

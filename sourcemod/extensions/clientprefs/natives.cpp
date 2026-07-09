@@ -29,6 +29,7 @@
  * Version: $Id$
  */
 
+#include <cinttypes>
 #include "extension.h"
 #include "cookie.h"
 #include "menus.h"

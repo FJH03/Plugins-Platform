@@ -58,7 +58,8 @@ using namespace SourceHook::Asm;
 
 SourceHook::Asm::x64JitWriter* GenerateThunk(HookSetup* hook)
 {
-	auto masm = new x64JitWriter();
+	static SourceHook::CPageAlloc s_VHookAllocator(16);
+	auto masm = new x64JitWriter(&s_VHookAllocator);
 	auto type = hook->returnType;
 
 	// We're going to transform rbp into our stack

@@ -13,6 +13,7 @@
 #include <sp_vm_api.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <cinttypes>
 #include <amtl/am-cxx.h>
 #include <amtl/experimental/am-argparser.h>
 #include "api.h"

@@ -137,7 +137,7 @@ class Config(object):
         cxx.cxxincludes += [
             self.amtl,
             os.path.join(builder.sourcePath, 'include'),
-            os.path.join(builder.sourcePath, 'third_party'),
+            os.path.join(builder.sourcePath, '..', '..', 'third_party'),
         ]
 
     def configure_gcc(self, cxx):
@@ -544,9 +544,32 @@ class SourcePawn(object):
         if self.zlib is not None:
             return
         self.zlib = {}
+        zlib_src = os.path.join(builder.currentSourcePath, '..', '..', 'third_party', 'zlib')
         for cxx in self.root.targets:
-            self.zlib[cxx.target.arch] = self.BuildForArch("third_party/zlib/AMBuilder", cxx)
-        self.included_zlib = True
+            builder.cxx = cxx
+            try:
+                binary = self.root.StaticLibrary(builder, 'z')
+                binary.sources += [
+                    os.path.join(zlib_src, 'adler32.c'),
+                    os.path.join(zlib_src, 'compress.c'),
+                    os.path.join(zlib_src, 'crc32.c'),
+                    os.path.join(zlib_src, 'deflate.c'),
+                    os.path.join(zlib_src, 'gzclose.c'),
+                    os.path.join(zlib_src, 'gzlib.c'),
+                    os.path.join(zlib_src, 'gzread.c'),
+                    os.path.join(zlib_src, 'gzwrite.c'),
+                    os.path.join(zlib_src, 'infback.c'),
+                    os.path.join(zlib_src, 'inffast.c'),
+                    os.path.join(zlib_src, 'inflate.c'),
+                    os.path.join(zlib_src, 'inftrees.c'),
+                    os.path.join(zlib_src, 'trees.c'),
+                    os.path.join(zlib_src, 'uncompr.c'),
+                    os.path.join(zlib_src, 'zutil.c'),
+                ]
+                cppnode = builder.Add(binary)
+                self.zlib[cxx.target.arch] = cppnode.binary
+            finally:
+                builder.cxx = None
 
     def SpProgram(self, builder, name):
         binary = self.root.Program(builder, name)

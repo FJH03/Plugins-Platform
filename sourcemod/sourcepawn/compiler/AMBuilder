@@ -3,6 +3,10 @@ import os
 
 module = binary.Module(builder, 'compiler')
 
+module.compiler.includes += [
+    os.path.join(builder.currentSourcePath, '..', '..', '..', 'third_party'),
+]
+
 module.sources += [
   'assembler.cpp',
   'array-helpers.cpp',

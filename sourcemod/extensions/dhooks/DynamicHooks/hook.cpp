@@ -39,7 +39,8 @@
 #include "extension.h"
 
 #ifdef DYNAMICHOOKS_x86_64
-
+using namespace SourceHook::Asm;
+static SourceHook::CPageAlloc s_HookAllocator(16);
 #else
 #include <macro-assembler-x86.h>
 #include <jit/jit_helpers.h>
@@ -57,6 +58,9 @@ using namespace sp;
 // >> CHook
 // ============================================================================
 CHook::CHook(void* pFunc, ICallingConvention* pConvention)
+#ifdef DYNAMICHOOKS_x86_64
+	: m_bridge(&s_HookAllocator), m_postCallback(&s_HookAllocator)
+#endif
 {
 	m_pFunc = pFunc;
 	m_pRegisters = new CRegisters(pConvention->GetRegisters());
@@ -80,13 +84,13 @@ CHook::CHook(void* pFunc, ICallingConvention* pConvention)
 	m_Hook = std::move(result.value());
 	m_pTrampoline = m_Hook.original<void*>();
 
-	m_Hook.enable();
+	(void)m_Hook.enable();
 }
 
 CHook::~CHook()
 {
 	if (m_Hook.enabled()) {
-		m_Hook.disable();
+		(void)m_Hook.disable();
 	}
 
 	// x64 will free these in the m_bridge/m_postCallback destructors.
@@ -223,8 +227,6 @@ void __cdecl CHook::SetReturnAddress(void* pRetAddr, void* pESP)
 }
 
 #ifdef DYNAMICHOOKS_x86_64
-using namespace SourceHook::Asm;
-SourceHook::CPageAlloc SourceHook::Asm::GenBuffer::ms_Allocator(16);
 
 void PrintFunc(const char* message) {
 	g_pSM->LogMessage(myself, message);
