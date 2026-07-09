@@ -50,10 +50,9 @@ struct SmxConsts {
     static const uint16_t SP1_VERSION_1_0 = 0x0101;
     static const uint16_t SP1_VERSION_1_1 = 0x0102;
     static const uint16_t SP1_VERSION_1_7 = 0x0107;
+    static const uint16_t SP1_VERSION_1_13 = 0x0113;
     static const uint16_t SP1_VERSION_MIN = SP1_VERSION_1_0;
-    static const uint16_t SP1_VERSION_MAX = SP1_VERSION_1_7;
-    static const uint16_t SP2_VERSION_MIN = 0x0200;
-    static const uint16_t SP2_VERSION_MAX = 0x0200;
+    static const uint16_t SP1_VERSION_MAX = SP1_VERSION_1_13;
 
     // Compression types.
     static const uint8_t FILE_COMPRESSION_NONE = 0;
@@ -64,10 +63,12 @@ struct SmxConsts {
     // Version 11: Not used; no changes.
     // Version 12: PROC/RETN semantic changes.
     // Version 13: Feature flags in code headers.
+    // Version 14: The stack and locals are now typed.
     static const uint8_t CODE_VERSION_MINIMUM = 9;
     static const uint8_t CODE_VERSION_SM_LEGACY = 10;
     static const uint8_t CODE_VERSION_FEATURE_MASK = 13;
-    static const uint8_t CODE_VERSION_CURRENT = CODE_VERSION_FEATURE_MASK;
+    static const uint8_t CODE_VERSION_TYPED_STACK = 14;
+    static const uint8_t CODE_VERSION_CURRENT = CODE_VERSION_TYPED_STACK;
     static const uint8_t CODE_VERSION_ALWAYS_REJECT = 0x7f;
 
     static const uint32_t kCodeFeatureDeprecated0 = (1 << 0);
@@ -81,6 +82,9 @@ struct SmxConsts {
 
     // This feature indicates that INVALID_FUNCTION is null (0) instead of -1.
     static const uint32_t kCodeFeatureNullFunctions = (1 << 3);
+
+    // This feature indicates support for int64 and float ops.
+    static const uint32_t kCodeFeatureTypedOps = (1 << 4);
 };
 
 // These structures are byte-packed.

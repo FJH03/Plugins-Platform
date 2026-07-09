@@ -80,7 +80,7 @@ bool SemaContext::BindType(const token_pos_t& pos, typeinfo_t* ti) {
             return false;
     }
 
-    if (auto enum_type = ti->type->asEnumStruct()) {
+    if (ti->type->asEnumStruct()) {
         if (ti->reference) {
             report(pos, 136);
             return false;
@@ -101,6 +101,9 @@ bool SemaContext::BindType(const token_pos_t& pos, Atom* atom, bool is_label, Ty
         report(pos, 139) << atom;
         return false;
     }
+
+    if (type->isTypedef())
+        type = type->inner();
 
     *out_type = type;
     return true;
@@ -295,16 +298,30 @@ TypedefDecl::EnterNames(SemaContext& sc)
         return false;
     }
 
-    fe_ = funcenums_add(sc.cc(), name_, false);
+    if (type_) {
+        fe_ = funcenums_add(sc.cc(), name_, false);
+    } else {
+        if (!sc.BindType(pos(), ti_))
+            return false;
+        if (ti_->dim_exprs.size() && !ResolveArrayType(sc.sema(), pos(), ti_, sGLOBAL))
+            return false;
+        if (ti_->type->isArray()) {
+            report(this, 465) << ti_->type;
+            return false;
+        }
+        sc.cc().types()->defineTypedef(name_, ti_->type);
+    }
     return true;
 }
 
 bool TypedefDecl::Bind(SemaContext& sc) {
-    auto ft = type_->Bind(sc);
-    if (!ft)
-        return false;
+    if (type_) {
+        auto ft = type_->Bind(sc);
+        if (!ft)
+            return false;
 
-    new (&fe_->entries) PoolArray<FunctionType*>({ft});
+        new (&fe_->entries) PoolArray<FunctionType*>({ft});
+    }
     return true;
 }
 
@@ -313,7 +330,7 @@ FunctionType* TypedefInfo::Bind(SemaContext& sc) {
         return nullptr;
 
     bool variadic = false;
-    std::vector<std::pair<QualType, sp::Atom*>> ft_args;
+    std::vector<QualType> ft_args;
     for (auto& arg : args) {
         if (!sc.BindType(pos, &arg->type))
             return nullptr;
@@ -324,10 +341,10 @@ FunctionType* TypedefInfo::Bind(SemaContext& sc) {
         if (arg->type.is_varargs)
             variadic = true;
         else
-            ft_args.emplace_back(arg->type.qualified(), arg->name);
+            ft_args.emplace_back(arg->type.qualified());
     }
 
-    return sc.cc().types()->defineFunction(ret_type.type(), ft_args, variadic);
+    return sc.cc().types()->defineFunction(QualType(ret_type.type()), ft_args, variadic);
 }
 
 bool
@@ -365,17 +382,29 @@ bool ConstDecl::EnterNames(SemaContext& sc) {
     if (!CheckNameRedefinition(sc, name(), pos(), vclass()))
         return false;
     DefineSymbol(sc, this, vclass());
+
+    // Bind early to make the constant value available during name-binding.
+    if (!sc.func() && !Bind(sc))
+        return false;
     return true;
 }
 
 bool
 ConstDecl::Bind(SemaContext& sc)
 {
+    if (already_bound_)
+        return true;
+
     if (sc.func() && !EnterNames(sc))
         return false;
 
     if (!sc.BindType(pos_, &type_))
         return false;
+
+    if (type_.type->isInt64()) {
+        report(this, 459) << type_.type;
+        return false;
+    }
 
     if (!expr_->Bind(sc))
         return false;
@@ -390,10 +419,15 @@ ConstDecl::Bind(SemaContext& sc)
 
     AutoErrorPos aep(pos_);
     matchtag(type_.type, type, 0);
+
+    already_bound_ = true;
     return true;
 }
 
 bool VarDeclBase::Bind(SemaContext& sc) {
+    if (already_bound_)
+        return true;
+
     // |int x = x| should bind to outer x, not inner.
     if (init_)
         init_rhs()->Bind(sc);
@@ -434,6 +468,17 @@ bool VarDeclBase::Bind(SemaContext& sc) {
     // LHS bind should now succeed.
     if (init_)
         init_->left()->BindLval(sc);
+    return true;
+}
+
+bool VarDeclBase::EnterNames(SemaContext& sc) {
+    if (vclass_ != sGLOBAL && vclass_ != sSTATIC)
+        return true;
+
+    if (!Bind(sc))
+        return false;
+
+    already_bound_ = true;
     return true;
 }
 
@@ -665,14 +710,11 @@ SwitchStmt::Bind(SemaContext& sc)
 
 bool FunctionDecl::EnterNames(SemaContext& sc) {
     FunctionDecl* other = nullptr;
-    if (!decl_.opertok) {
-        // Handle forwards.
-        Decl* found = FindSymbol(sc, name_);
-        if (found) {
-            if ((other = CanRedefine(found)) == nullptr)
-                return false;
-            assert(!other || !other->proto_or_impl_);
-        }
+    // Handle forwards.
+    if (Decl* found = FindSymbol(sc, name_)) {
+        if ((other = CanRedefine(found)) == nullptr)
+            return false;
+        assert(!other || !other->proto_or_impl_);
     }
 
     if (other) {
@@ -762,9 +804,6 @@ bool FunctionDecl::Bind(SemaContext& outer_sc) {
             error(pos(), 42);      // invalid combination of class specifiers.
     }
 
-    if (decl_.opertok)
-        name_ = NameForOperator();
-
     SemaContext sc(outer_sc, this);
     auto restore_sc = ke::MakeScopeGuard([&outer_sc]() {
         outer_sc.sema()->set_context(&outer_sc);
@@ -802,32 +841,12 @@ FunctionDecl::BindArgs(SemaContext& sc)
 {
     AutoCountErrors errors;
 
-    size_t arg_index = 0;
     for (auto& var : args_) {
         const auto& typeinfo = var->type_info();
 
         AutoErrorPos pos(var->pos());
 
-        if (typeinfo.is_varargs) {
-            /* redimension the argument list, add the entry iVARARGS */
-            var->BindAddress(static_cast<cell>((arg_index + 3) * sizeof(cell)));
-            break;
-        }
-
         Type* type = typeinfo.type;
-
-        /* Stack layout:
-         *   base + 0*sizeof(cell)  == previous "base"
-         *   base + 1*sizeof(cell)  == function return address
-         *   base + 2*sizeof(cell)  == number of arguments
-         *   base + 3*sizeof(cell)  == first argument of the function
-         * So the offset of each argument is "(argcnt+3) * sizeof(cell)".
-         *
-         * Since arglist has an empty terminator at the end, we actually add 2.
-         */
-        var->BindAddress(static_cast<cell>((arg_index + 3) * sizeof(cell)));
-        arg_index++;
-
         if (type->isArray() || typeinfo.type->isEnumStruct()) {
             if (sc.sema()->CheckVarDecl(var) && var->init_rhs())
                 fill_arg_defvalue(sc.cc(), var);
@@ -848,10 +867,10 @@ FunctionDecl::BindArgs(SemaContext& sc)
                     val = 0;
                     type = typeinfo.type;
                 }
-                var->default_value()->type = type;
+                var->default_value()->type = QualType(type);
                 var->default_value()->val = ke::Some(val);
 
-                matchtag(var->type(), type, MATCHTAG_COERCE);
+                matchtag(*var->type(), type, MATCHTAG_COERCE);
             }
         }
 
@@ -896,58 +915,6 @@ FunctionDecl::BindArgs(SemaContext& sc)
         canonical()->compared_prototype_args = true;
     }
     return errors.ok();
-}
-
-Atom* FunctionDecl::NameForOperator() {
-    std::vector<std::string> params;
-
-    int count = 0;
-    Type* tags[2] = {nullptr, nullptr};
-    for (const auto& var : args_) {
-        if (count < 2)
-            tags[count] = var->type();
-        if (IsReferenceType(iVARIABLE, var->type()))
-            report(pos_, 66) << var->name();
-        if (var->init_rhs())
-            report(pos_, 59) << var->name();
-        count++;
-
-        if (!var->type()->canOperatorOverload()) {
-            report(pos_, 449) << var->type();
-            continue;
-        }
-
-        params.emplace_back(var->type()->declName()->str());
-    }
-
-    /* for '!', '++' and '--', count must be 1
-     * for '-', count may be 1 or 2
-     * for '=', count must be 1, and the resulttag is also important
-     * for all other (binary) operators and the special '~' operator, count must be 2
-     */
-    switch (decl_.opertok) {
-        case '!':
-        case '=':
-        case tINC:
-        case tDEC:
-            if (count != 1)
-                error(pos_, 62);
-            break;
-        case '-':
-            if (count != 1 && count != 2)
-                error(pos_, 62);
-            break;
-        default:
-            if (count != 2)
-                error(pos_, 62);
-            break;
-    }
-    if (IsReferenceType(iVARIABLE, decl_.type.type))
-        error(pos_, 62);
-
-    std::string name =
-        "operator" + get_token_string(decl_.opertok) + "(" + ke::Join(params, ",") + ")";
-    return CompileContext::get().atom(name);
 }
 
 bool
@@ -1257,7 +1224,7 @@ bool MethodmapDecl::BindSetter(SemaContext& sc, MethodmapPropertyDecl* prop) {
     }
 
     auto decl = fun->args()[1];
-    if (decl->init_rhs() || decl->type_info().type != prop->type()) {
+    if (decl->init_rhs() || decl->type_info().qualified() != prop->type()) {
         report(prop, 150) << prop->type();
         return false;
     }

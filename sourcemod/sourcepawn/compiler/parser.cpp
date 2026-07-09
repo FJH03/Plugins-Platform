@@ -94,8 +94,8 @@ Parser::Parse()
             case tSTATIC:
             case tPUBLIC:
             case tSTOCK:
-            case tOPERATOR:
             case tNATIVE:
+            case tBUILTIN:
             case tFORWARD: {
                 auto tok = *lexer_->current_token();
                 decl = parse_unknown_decl(&tok);
@@ -221,7 +221,10 @@ Parser::parse_unknown_decl(const full_token_t* tok)
 {
     declinfo_t decl = {};
 
-    if (tok->id == tNATIVE || tok->id == tFORWARD) {
+    if (tok->id == tBUILTIN && !lexer_->inpf()->is_builtin())
+        report(lexer_->pos(), 463);
+
+    if (tok->id == tNATIVE || tok->id == tFORWARD || tok->id == tBUILTIN) {
         parse_decl(&decl, DECLFLAG_MAYBE_FUNCTION);
         return parse_inline_function(tok->id, decl);
     }
@@ -259,8 +262,7 @@ Parser::parse_unknown_decl(const full_token_t* tok)
     // Hacky bag o' hints as to whether this is a variable decl.
     bool probablyVariable = tok->id == tNEW || decl.type.has_postdims || !lexer_->peek('(') ||
                             decl.type.is_const;
-
-    if (!decl.opertok && probablyVariable) {
+    if (probablyVariable) {
         if (tok->id == tNEW && decl.type.is_new)
             report(143);
 
@@ -535,8 +537,18 @@ Parser::parse_typedef()
 
     lexer_->need('=');
 
-    auto type = parse_function_type();
-    return new TypedefDecl(pos, ident, type);
+    if (lexer_->peek('(') || lexer_->peek(tFUNCTION)) {
+        auto type = parse_function_type();
+        return new TypedefDecl(pos, ident, type);
+    } else {
+        typeinfo_t* ti = cc_.allocator().alloc<typeinfo_t>();
+        if (!parse_new_typeexpr(ti, nullptr, 0))
+            return nullptr;
+
+        lexer_->require_newline(TerminatorPolicy::Semicolon);
+        cc_.reports()->ResetErrorFlag();
+        return new TypedefDecl(pos, ident, ti);
+    }
 }
 
 Decl*
@@ -747,6 +759,11 @@ Parser::plnge_rel(const int* opstr, NewHierFn hier)
         ops.push_back(CompareOp(pos, opstr[opidx], right));
     } while (nextop(&opidx, opstr));
 
+    if (ops.size() == 1) {
+        // Devolve this to BinaryExpr which is much saner.
+        return new BinaryExpr(chain_pos, ops[0].token, first, ops[0].expr);
+    }
+
     return new ChainedCompareExpr(chain_pos, first, ops);
 }
 
@@ -833,6 +850,11 @@ Expr*
 Parser::hier2()
 {
     int tok = lexer_->lex();
+    if (tok == 0) {
+        report(453);
+        return nullptr;
+    }
+
     auto pos = lexer_->pos();
     switch (tok) {
         case tINC: /* ++lval */
@@ -895,7 +917,7 @@ Parser::hier2()
                 return nullptr;
 
             while (nparens--) {
-                if (!lexer_->match(')'))
+                if (!lexer_->need(')'))
                     break;
             }
 
@@ -1017,6 +1039,8 @@ Parser::constant()
         case tCHAR_LITERAL:
         case tNUMBER:
             return new NumberExpr(pos, types_->type_int(), lexer_->current_token()->value());
+        case tNUMBER64:
+            return new Number64Expr(pos, lexer_->current_token()->atom);
         case tRATIONAL:
             return new FloatExpr(cc_, pos, lexer_->current_token()->value());
         case tSTRING: {
@@ -1694,6 +1718,8 @@ Parser::parse_inline_function(int tokid, const declinfo_t& decl)
 
     if (tokid == tNATIVE || tokid == tMETHODMAP)
         fun->set_is_native();
+    else if (tokid == tBUILTIN)
+        fun->set_is_builtin();
     else if (tokid == tPUBLIC)
         fun->set_is_public();
     else if (tokid == tFORWARD)
@@ -1731,11 +1757,7 @@ Parser::parse_function(FunctionDecl* fun, int tokid, bool has_this)
     // Copy arguments.
     new (&fun->args()) PoolArray<ArgDecl*>(args);
 
-    if (fun->is_native()) {
-        if (fun->decl().opertok != 0) {
-            lexer_->need('=');
-            lexer_->lexpush();
-        }
+    if (fun->is_native() || fun->is_builtin()) {
         if (lexer_->match('=')) {
             report(442);
             lexer_->match(tSYMBOL);
@@ -1745,6 +1767,7 @@ Parser::parse_function(FunctionDecl* fun, int tokid, bool has_this)
     switch (tokid) {
         case tNATIVE:
         case tFORWARD:
+        case tBUILTIN:
             lexer_->need(tTERM);
             return true;
         case tMETHODMAP:
@@ -2158,14 +2181,14 @@ Parser::parse_decl(declinfo_t* decl, int flags)
         return parse_old_decl(decl, flags);
 
     // Another dead giveaway is there being a label or typeless operator.
-    if (lexer_->peek(tLABEL) || lexer_->peek(tOPERATOR))
+    if (lexer_->peek(tLABEL))
         return parse_old_decl(decl, flags);
 
     // Otherwise, we have to eat a symbol to tell.
     if (lexer_->matchsymbol(&ident)) {
         auto ident_tok = *lexer_->current_token();
 
-        if (lexer_->peek(tSYMBOL) || lexer_->peek(tOPERATOR) || lexer_->peek('&') || lexer_->peek(tELLIPS)) {
+        if (lexer_->peek(tSYMBOL) || lexer_->peek('&') || lexer_->peek(tELLIPS)) {
             // A new-style declaration only allows array dims or a symbol name, so
             // this is a new-style declaration.
             return parse_new_decl(decl, &ident_tok, flags);
@@ -2279,35 +2302,29 @@ Parser::parse_old_decl(declinfo_t* decl, int flags)
     }
 
     if (flags & DECLMASK_NAMED_DECL) {
-        if ((flags & DECLFLAG_MAYBE_FUNCTION) && lexer_->match(tOPERATOR)) {
-            decl->opertok = operatorname(&decl->name);
-            if (decl->opertok == 0)
-                decl->name = cc_.atom("__unknown__");
-        } else {
-            if (!lexer_->peek(tSYMBOL)) {
-                int tok_id = lexer_->lex();
-                switch (tok_id) {
-                    case tOBJECT:
-                    case tCHAR:
-                    case tVOID:
-                    case tINT:
-                        if (lexer_->peek(tSYMBOL)) {
-                            report(143);
-                        } else {
-                            report(157) << get_token_string(tok_id);
-                            decl->name = cc_.atom(get_token_string(tok_id));
-                        }
-                        break;
-                    default:
-                        lexer_->lexpush();
-                        break;
-                }
+        if (!lexer_->peek(tSYMBOL)) {
+            int tok_id = lexer_->lex();
+            switch (tok_id) {
+                case tOBJECT:
+                case tCHAR:
+                case tVOID:
+                case tINT:
+                    if (lexer_->peek(tSYMBOL)) {
+                        report(143);
+                    } else {
+                        report(157) << get_token_string(tok_id);
+                        decl->name = cc_.atom(get_token_string(tok_id));
+                    }
+                    break;
+                default:
+                    lexer_->lexpush();
+                    break;
             }
-            lexer_->needsymbol(&decl->name);
         }
+        lexer_->needsymbol(&decl->name);
     }
 
-    if ((flags & DECLMASK_NAMED_DECL) && !decl->opertok) {
+    if (flags & DECLMASK_NAMED_DECL) {
         if (lexer_->match('['))
             parse_post_array_dims(decl, flags);
     }
@@ -2329,13 +2346,7 @@ Parser::parse_new_decl(declinfo_t* decl, const full_token_t* first, int flags)
             return true;
         }
 
-        if ((flags & DECLFLAG_MAYBE_FUNCTION) && lexer_->match(tOPERATOR)) {
-            decl->opertok = operatorname(&decl->name);
-            if (decl->opertok == 0)
-                decl->name = cc_.atom("__unknown__");
-        } else {
-            lexer_->needsymbol(&decl->name);
-        }
+        lexer_->needsymbol(&decl->name);
     }
 
     if (flags & DECLMASK_NAMED_DECL) {
@@ -2513,6 +2524,7 @@ Parser::parse_new_typeexpr(typeinfo_t* type, const full_token_t* first, int flag
         }
     }
 
+    type->is_new = true;
     return true;
 }
 

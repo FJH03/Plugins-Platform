@@ -36,7 +36,7 @@ Supported CPUs
 --------------
 
 SourcePawn "should" run on any architecture. It has been tested on ARMv7, ARMv8, x86, and x86\_64.
-However, only x86 currently has a just-in-time (JIT) compiler. Other architectures fallback to an
+However, only x86 and x86_64 support a just-in-time (JIT) compiler. Other architectures fallback to an
 interpreter (albeit, a very simple and efficient one).
 
 When emitting binaries, SourcePawn does not take platform endianness into account. Thus, a `.smx`
@@ -210,3 +210,17 @@ This release contains a number of language changes.
  - The `__nullable__` and destructor syntax for handles have been re-introduced.
  - Built-in defines and constants are now defined by an in-memory implicit include.
  - `#endinput` is no longer necessary. `#include` will no longer double-include.
+
+### SourcePawn 1.13
+
+SourcePawn 1.13 is currently in development.
+
+ - A new `int64` primitive type is available for 64-bit arithmetic. Plugins
+   using int64 will require a newer SourcePawn VM to run.
+ - The `float` type is now intrinsically supported, and `float.inc` is no
+   longer required for basic float support.
+ - Operator overload support has been removed due to lack of use.
+ - An x64 JIT backend has been added. It is used on x64 processors supporting
+   SSE 4.1 and higher, for plugins compiled on spcomp 1.13 or higher.
+ - The x86 JIT will now only run on processors supporting SSE2 and higher.
+ - The .pubvars and .publics sections of SMX files are no longer sorted.

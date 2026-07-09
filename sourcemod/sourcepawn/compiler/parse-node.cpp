@@ -19,6 +19,9 @@
 //  3.  This notice may not be removed or altered from any source distribution.
 #include "parse-node.h"
 
+#include <errno.h>
+#include <stdlib.h>
+
 #include "errors.h"
 
 namespace sp {
@@ -35,7 +38,8 @@ VarDeclBase::VarDeclBase(StmtKind kind, const token_pos_t& pos, Atom* name,
    is_stock_(is_stock),
    autozero_(true),
    is_read_(false),
-   is_written_(false)
+   is_written_(false),
+   already_bound_(false)
 {
     // Having a BinaryExpr allows us to re-use assignment logic.
     if (initializer)
@@ -80,17 +84,6 @@ LogicalExpr::FlattenLogical(int token, std::vector<Expr*>* out)
     }
 }
 
-bool Stmt::IsTerminal() const {
-    switch (flow_type()) {
-        case Flow_Break:
-        case Flow_Continue:
-        case Flow_Return:
-            return true;
-        default:
-            return false;
-    }
-}
-
 BlockStmt*
 BlockStmt::WrapStmt(Stmt* stmt)
 {
@@ -120,12 +113,12 @@ FunctionDecl::FunctionDecl(StmtKind kind, const token_pos_t& pos, const declinfo
     is_stock_(false),
     is_forward_(false),
     is_native_(false),
+    is_builtin_(false),
     is_analyzing_(false),
     explicit_return_type_(false),
     retvalue_used_(false),
     is_callback_(false),
     returns_value_(false),
-    always_returns_(false),
     is_live_(false),
     maybe_used_(false)
 {
@@ -220,7 +213,7 @@ Type* MethodmapPropertyDecl::property_type() const {
     if (setter_->args().size() != 2)
         return types->type_void();
     ArgDecl* valp = setter_->args()[1];
-    return valp->type();
+    return *valp->type();
 }
 
 cell Decl::ConstVal() {
@@ -233,9 +226,9 @@ cell Decl::ConstVal() {
     return 0;
 }
 
-Type* Decl::type() const {
+QualType Decl::type() const {
     assert(false);
-    return nullptr;
+    return QualType(nullptr);
 }
 
 bool Decl::is_const() {
@@ -255,43 +248,43 @@ char Decl::vclass() {
     return 0;
 }
 
-IdentifierKind Decl::ident() {
-    return ident_impl();
-}
-
-IdentifierKind Decl::ident_impl() {
-    switch (kind()) {
-        case StmtKind::ArgDecl:
-        case StmtKind::VarDecl:
-            return iVARIABLE;
-        case StmtKind::ConstDecl:
-        case StmtKind::EnumFieldDecl:
-            return iCONSTEXPR;
-        case StmtKind::FunctionDecl:
-        case StmtKind::MemberFunctionDecl:
-        case StmtKind::MethodmapMethodDecl:
-            return iFUNCTN;
-        case StmtKind::EnumStructDecl:
-        case StmtKind::MethodmapDecl:
-            return iTYPENAME;
-        case StmtKind::EnumDecl: {
-            auto es = as<EnumDecl>();
-            if (es->mm())
-                return iTYPENAME;
-            return iCONSTEXPR;
-        }
-        default:
-            assert(false);
-            return iINVALID;
-    }
-}
-
 LayoutFieldDecl* PstructDecl::FindField(Atom* name) {
     for (const auto& field : fields_) {
         if (field->name() == name)
             return field;
     }
     return nullptr;
+}
+
+std::optional<int64_t> Number64Expr::ToInt64(Expr* expr) {
+    auto e = expr->as<Number64Expr>();
+    if (!e)
+        return {};
+    return e->ToInt64();
+}
+
+std::optional<int64_t> Number64Expr::ToInt64() {
+    if (value_)
+        return value_;
+
+    char* endptr;
+    int64_t value = strtoll(atom_->chars(), &endptr, 10);
+    if ((value == LLONG_MIN || value == LLONG_MAX) && errno == ERANGE)
+        return {};
+
+    assert(!*endptr);
+
+    value_ = {value};
+    return value_;
+}
+
+SimpleCastExpr::SimpleCastExpr(Expr* from, Type* to)
+  : EmitOnlyExpr(ExprKind::SimpleCastExpr, from->pos()),
+    from_(from),
+    to_(to)
+{
+    val_.ident = iEXPRESSION;
+    val_.set_type(to);
 }
 
 } // namespace cc

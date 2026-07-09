@@ -29,7 +29,7 @@
 #include <amtl/am-vector.h>
 #include <sp_vm_types.h>
 #include "pool-objects.h"
-#include "shared/string-atom.h"
+#include "utils/string-atom.h"
 #include "stl/stl-vector.h"
 
 typedef int32_t cell;
@@ -50,12 +50,11 @@ enum IdentifierKind {
     iEXPRESSION = 7,    /* expression result, has no address (rvalue) */
     iCONSTEXPR = 8,     /* constant expression (or constant symbol) */
     iFUNCTN = 9,
-    iVARARGS = 11,      /* function specified ... as argument(s) */
     iACCESSOR = 13,     /* property accessor via a methodmap_method_t */
     iTYPENAME = 14,     /* symbol defining a type */
 };
 
-enum class BuiltinType {
+enum class BuiltinType : uint8_t {
     Bool,
     Char,
     Int,
@@ -63,6 +62,7 @@ enum class BuiltinType {
     Null,
     Any,
     Void,
+    Int64,
 };
 
 enum class TypeKind : uint8_t {
@@ -75,7 +75,8 @@ enum class TypeKind : uint8_t {
     Enum,
     Reference,
     Array,
-    FunctionSignature
+    FunctionSignature,
+    Typedef
 };
 
 struct funcenum_t;
@@ -247,6 +248,7 @@ class Type : public PoolObject
     bool isBuiltin() const { return kind_ == TypeKind::Builtin; }
     bool isBuiltin(BuiltinType type) const { return isBuiltin() && builtin_type_ == type; }
     bool isInt() const { return isBuiltin(BuiltinType::Int); }
+    bool isInt64() const { return isBuiltin(BuiltinType::Int64); }
     bool isNull() const { return isBuiltin(BuiltinType::Null); }
     bool isChar() const { return isBuiltin(BuiltinType::Char); }
     bool isAny() const { return isBuiltin(BuiltinType::Any); }
@@ -255,7 +257,11 @@ class Type : public PoolObject
     bool isBool() const { return isBuiltin(BuiltinType::Bool); }
     bool isReference() const { return kind_ == TypeKind::Reference; }
     bool isArray() const { return kind_ == TypeKind::Array; }
+    bool isTypedef() const { return kind_ == TypeKind::Typedef; }
     bool isCharArray() const;
+
+    // True if a value representation can be > 1 cell.
+    bool isComposite() const { return isArray() || isEnumStruct() || isInt64(); }
 
     bool hasCellSize() const { return !isChar() && !isEnumStruct(); }
 
@@ -336,7 +342,7 @@ class Type : public PoolObject
     }
 
     Type* inner() const {
-        assert(isReference() || isArray());
+        assert(isReference() || isArray() || isTypedef());
         return inner_type_;
     }
 
@@ -369,6 +375,11 @@ class Type : public PoolObject
         assert(kind_ == TypeKind::Reference);
         inner_type_ = inner;
     }
+    void setTypedef(Type* inner) {
+        assert(!inner->isTypedef());
+        assert(kind_ == TypeKind::Typedef);
+        inner_type_ = inner;
+    }
 
     void resetPtr();
 
@@ -385,13 +396,13 @@ class Type : public PoolObject
         PstructDecl* pstruct_ptr_;
         BuiltinType builtin_type_;
         Type* inner_type_;
-        Type* return_type_;
+        QualType return_type_;
     };
 };
 
 class FunctionType : public Type {
   public:
-    FunctionType(Type* return_type, const std::vector<std::pair<QualType, sp::Atom*>>& args,
+    FunctionType(QualType return_type, const std::vector<QualType>& args,
                  bool variadic)
       : Type(nullptr, TypeKind::FunctionSignature),
         variadic_(variadic)
@@ -400,14 +411,13 @@ class FunctionType : public Type {
         new (&args_) decltype(args_)(args);
     }
 
-    Type* return_type() const { return return_type_; }
+    QualType return_type() const { return return_type_; }
     unsigned int nargs() const { return (unsigned int)args_.size(); }
-    QualType arg_type(unsigned int i) { return args_[i].first; }
-    sp::Atom* arg_name(unsigned int i) { return args_[i].second; }
+    QualType arg_type(unsigned int i) { return args_[i]; }
     bool variadic() const { return variadic_; }
 
   private:
-    PoolArray<std::pair<QualType, sp::Atom*>> args_;
+    PoolArray<QualType> args_;
     bool variadic_;
 };
 
@@ -422,12 +432,6 @@ class ArrayType : public Type {
   private:
     int size_;
 };
-
-static inline bool IsReferenceType(IdentifierKind kind, Type* type) {
-    return type->isArray() ||
-           type->isReference() ||
-           (kind == iVARIABLE && type->isEnumStruct());
-}
 
 class TypeManager
 {
@@ -449,12 +453,13 @@ class TypeManager
     Type* defineTag(Atom* atom);
     Type* definePstruct(PstructDecl* decl);
     Type* defineReference(Type* inner);
+    Type* defineTypedef(Atom* name, Type* inner);
     ArrayType* defineArray(Type* element_type, int dim);
     ArrayType* defineArray(Type* element_type, const int* dim_vec, int numdim);
     ArrayType* defineArray(Type* element_type, const PoolArray<int>& dim_vec);
     ArrayType* redefineArray(Type* element_type, ArrayType* old_type);
-    FunctionType* defineFunction(Type* return_type,
-                                 const std::vector<std::pair<QualType, sp::Atom*>>& args,
+    FunctionType* defineFunction(QualType return_type,
+                                 const std::vector<QualType>& args,
                                  bool variadic);
 
     Type* type_object() const { return type_object_; }
@@ -467,6 +472,9 @@ class TypeManager
     Type* type_string() const { return type_string_; }
     Type* type_char() const { return type_string_; }
     Type* type_int() const { return type_int_; }
+    Type* type_int64() const { return type_int64_; }
+
+    Type* GetBuiltin(BuiltinType type) const { return builtin_types_[(int)type]; }
 
   private:
     Type* add(const char* name, TypeKind kind);
@@ -478,6 +486,7 @@ class TypeManager
     CompileContext& cc_;
     tr::unordered_map<Atom*, Type*> types_;
     tr::unordered_map<Type*, Type*> ref_types_;
+    tr::vector<Type*> builtin_types_;
     std::vector<Type*> by_index_;
     Type* type_int_ = nullptr;
     Type* type_object_ = nullptr;
@@ -488,6 +497,7 @@ class TypeManager
     Type* type_float_ = nullptr;
     Type* type_bool_ = nullptr;
     Type* type_string_ = nullptr;
+    Type* type_int64_ = nullptr;
 
     struct ArrayCachePolicy {
         typedef ArrayType* Payload;
@@ -506,8 +516,8 @@ class TypeManager
         typedef FunctionType* Payload;
 
         struct Lookup {
-            Type* return_type;
-            const std::vector<std::pair<QualType, sp::Atom*>>* args;
+            QualType return_type;
+            const std::vector<QualType>* args;
             bool variadic;
         };
 

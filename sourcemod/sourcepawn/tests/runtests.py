@@ -1,10 +1,11 @@
-# vim: set ts=2 sw=2 tw=99 et:
+# vim: set sts=2 sw=2 tw=99 et:
 import argparse
 import ast
 import datetime
 import os
 import platform
 import re
+import shutil
 import sys
 
 import testutil
@@ -19,8 +20,6 @@ def main():
                       help="Force testing a specific arch on dual-arch builds.")
   parser.add_argument('--show-cli', default=False, action='store_true',
                       help='Show the command-line invocation of each test.')
-  parser.add_argument('--spcomp2', default=False, action='store_true',
-                      help="Only test using spcomp2.")
   parser.add_argument('--compile-only', default=False, action='store_true',
                       help="Skip execution on tests with runtime components.")
   parser.add_argument('--runtime-only', default=False, action='store_true',
@@ -30,6 +29,8 @@ def main():
   parser.add_argument('--spcomp-arg', default=None, type=str, action='append',
                       dest='spcomp_args',
                       help="Add an extra argument to all spcomp invocations.")
+  parser.add_argument('--save-binaries', default=None, type=str,
+                      help='Save compiled binaries for tests with output. String must be a suffix.')
   parser.add_argument('--filter', default=None, type=str,
                       help='Filter for tests with a particular name.')
   args = parser.parse_args()
@@ -82,40 +83,12 @@ class TestPlan(object):
     return self.args.arch == arch
 
   def find_executable(self, path):
-    if os.path.exists(path):
-      pass
-    elif os.path.exists(path + '.js'):
-      path += '.js'
-    elif os.path.exists(path + '.exe'):
-      path += '.exe'
-    else:
-      return None
-    return path
+    return testutil.find_executable(path)
 
   def find_executables_in(self, path, name):
-    kPlatformNames = {
-        'Linux': 'linux',
-        'Darwin': 'mac',
-        'Windows': 'windows',
-    }
-
-    found = []
-    for subdir in os.listdir(path):
-      parts = subdir.split('-')
-      if len(parts) < 2:
-        continue
-      our_platform = kPlatformNames.get(platform.system(), platform.system())
-      if parts[0] != our_platform:
-        continue
-      if not self.match_arch(parts[1]):
-        continue
-
-      prefix = os.path.join(path, subdir, name)
-      full_path = self.find_executable(prefix)
-      if not full_path:
-        continue
-      found.append((parts[1], os.path.abspath(full_path)))
-    return found
+    return testutil.find_executables_in(
+        path, name, arch_filter=lambda arch: self.match_arch(arch)
+    )
 
   def find_shells(self):
     search_in = os.path.join(self.args.objdir, 'spshell')
@@ -144,10 +117,7 @@ class TestPlan(object):
       })
 
   def find_compilers(self):
-    if self.args.spcomp2:
-      self.find_spcomp2()
-    else:
-      self.find_spcomp()
+    self.find_spcomp()
 
   def find_spcomp(self):
     search_in = os.path.join(self.args.objdir, 'spcomp')
@@ -181,35 +151,6 @@ class TestPlan(object):
         # configuration.
         continue
 
-  def find_spcomp2(self):
-    for arch in self.arch_suffixes:
-      if not self.match_arch(arch):
-        continue
-
-      path = os.path.join(self.args.objdir, 'exp', 'compiler', 'spcomp2' + arch, 'spcomp2')
-
-      if not os.path.exists(path):
-        if not os.path.exists(path + '.js'):
-          continue
-        path += '.js'
-
-      spcomp2 = {
-        'path': os.path.abspath(path),
-        'arch': arch,
-        'name': 'spcomp2',
-        'args': [
-          '--show-ast=false',
-          '--show-sema=false',
-          '--pool-stats=false',
-        ],
-      }
-
-      self.modes.append({
-        'name': 'default',
-        'spcomp': spcomp2,
-        'args': [],
-      })
-
   def find_tests(self):
     for folder in os.listdir(self.tests_path):
       sub_folder = os.path.join(self.tests_path, folder)
@@ -222,6 +163,9 @@ class TestPlan(object):
     manifest_path = os.path.join(folder, 'manifest.ini')
     if os.path.exists(manifest_path):
       manifest = testutil.parse_manifest(manifest_path, local_folder, manifest)
+      folder_type = manifest_get(manifest, 'folder', 'type')
+      if folder_type is not None and folder_type != 'tests':
+        return
       if manifest_get(manifest, 'folder', 'skip') == 'true':
         return
 
@@ -262,12 +206,11 @@ class Test(object):
     self.smx_path = None
     self.stdout_file = None
     self.stderr_file = None
+    self.original_source = self.path
 
   def prepare(self):
     if self.local_manifest_ is not None:
       return
-
-    self.read_local_manifest()
 
     smx_path = os.path.basename(self.path)
     smx_base_path, ext = os.path.splitext(smx_path)
@@ -279,6 +222,16 @@ class Test(object):
       self.smx_path += '.smx'
 
     base_path, _ = os.path.splitext(self.path)
+
+    if self.path.endswith('.smx'):
+      # Check if this is a versioned prebuilt.
+      m = re.match(r"(.+)\-\d+\.\d+\.smx$", self.path)
+      if m is not None:
+        base_path = m.group(1)
+        self.original_source = '{}.sp'.format(base_path)
+
+    self.read_local_manifest()
+
     if os.path.exists(base_path + '.out'):
       self.stdout_file = base_path + '.out'
     if os.path.exists(base_path + '.err'):
@@ -364,10 +317,10 @@ class Test(object):
   def read_local_manifest(self):
     self.local_manifest_ = {}
 
-    if self.path.endswith('.smx'):
+    if self.original_source.endswith('.smx'):
       return
 
-    with open(self.path, 'rt', encoding='utf-8') as fp:
+    with open(self.original_source, 'rt', encoding='utf-8') as fp:
       for line in fp:
         if not self.process_manifest_line(line):
           break
@@ -376,7 +329,7 @@ class Test(object):
     if not line.startswith('//'):
       return False
 
-    m = re.match("// ([^:]+): (.+)\s*$", line)
+    m = re.match("// ([^:]+): (.+)\\s*$", line)
     if m is None:
       return False
 
@@ -478,6 +431,11 @@ class TestRunner(object):
         self.out_io(stderr, stdout)
         return False
 
+      if self.plan.args.save_binaries:
+        prefix, _ = os.path.splitext(test.path)
+        dest = '{}-{}.smx'.format(prefix, self.plan.args.save_binaries)
+        shutil.copy(test.smx_path, dest)
+
     # Run all shells we found.
     return self.run_shells(mode, test)
 
@@ -512,8 +470,6 @@ class TestRunner(object):
     for define in test.defines:
       argv += [define]
 
-    if mode['spcomp']['name'] == 'spcomp2':
-      argv += ['-o', test.smx_path]
     argv += [self.fix_path(spcomp_path, test.path)]
 
     # Run and return output.

@@ -38,6 +38,7 @@
 #include <IHandleSys.h>
 #include <IForwardSys.h>
 #include <IPlayerHelpers.h>
+#include <sourcepawn/vm/environment.h>
 #include "ExtensionSys.h"
 #include "GameConfigs.h"
 #include "common_logic.h"
@@ -98,8 +99,8 @@ void CPlugin::InitIdentity()
 
 	m_ident = g_ShareSys.CreateIdentity(g_PluginIdent, this);
 	m_handle = handlesys->CreateHandle(g_PluginType, this, g_PluginSys.GetIdentity(), g_PluginSys.GetIdentity(), NULL);
-	m_pRuntime->GetDefaultContext()->SetKey(1, m_ident);
-	m_pRuntime->GetDefaultContext()->SetKey(2, (IPlugin *)this);
+	m_pRuntime->SetKey(1, m_ident);
+	m_pRuntime->SetKey(2, (IPlugin *)this);
 }
 
 void CPlugin::DestroyIdentity()
@@ -330,10 +331,10 @@ bool CPlugin::ReadInfo()
 	else
 		m_MaxClientsVar = nullptr;
 
-	if (base->FindPubvarByName("PointerSize", &idx) == SP_ERROR_NONE) {
+	if (base->FindPubvarByName("Address_PointerSize", &idx) == SP_ERROR_NONE) {
 		sp_pubvar_t* var = nullptr;
 		if (base->GetPubvarByIndex(idx, &var) == SP_ERROR_NONE && var) {
-			*var->offs = sizeof(void*);
+			*reinterpret_cast<int64_t*>(var->offs) = sizeof(void*);
 		}
 	}
 
@@ -479,11 +480,6 @@ void CPlugin::Call_OnLibraryAdded(const char *lib)
 	pFunction->Execute(&result);
 }
 
-void *CPlugin::GetPluginStructure()
-{
-	return NULL;
-}
-
 // Only called during plugin construction.
 bool CPlugin::TryCompile()
 {
@@ -491,7 +487,7 @@ bool CPlugin::TryCompile()
 	g_pSM->BuildPath(Path_SM, fullpath, sizeof(fullpath), "plugins/%s", m_filename);
 
 	char loadmsg[255];
-	m_pRuntime.reset(g_pSourcePawn2->LoadBinaryFromFile(fullpath, loadmsg, sizeof(loadmsg)));
+	m_pRuntime.reset(g_pPawnEnv->LoadBinaryFromFile(fullpath, loadmsg, sizeof(loadmsg)));
 	if (!m_pRuntime) {
 		EvictWithError(Plugin_BadLoad, "Unable to load plugin (%s)", loadmsg);
 		return false;
@@ -513,11 +509,6 @@ IPluginContext *CPlugin::GetBaseContext()
 	}
 
 	return m_pRuntime->GetDefaultContext();
-}
-
-sp_context_t *CPlugin::GetContext()
-{
-	return NULL;
 }
 
 const char *CPlugin::GetFilename()
@@ -1292,7 +1283,7 @@ CPlugin *CPluginManager::CompileAndPrep(const char *path)
 
 bool CPluginManager::MalwareCheckPass(CPlugin *pPlugin)
 {
-	unsigned char *pCodeHash = pPlugin->GetRuntime()->GetCodeHash();
+	unsigned char *pCodeHash = pPlugin->runtime()->GetCodeHash();
 
 	char codeHashBuf[40];
 	ke::SafeStrcpy(codeHashBuf, sizeof(codeHashBuf), "plugin_");
@@ -1332,11 +1323,10 @@ bool CPluginManager::RunSecondPass(CPlugin *pPlugin)
 	g_ShareSys.BindNativesToPlugin(pPlugin, false);
 
 	// Find any unbound natives. Right now, these are not allowed.
-	IPluginContext *pContext = pPlugin->GetBaseContext();
-	uint32_t num = pContext->GetNativesNum();
+	uint32_t num = pPlugin->runtime()->GetNativesNum();
 	for (unsigned int i=0; i<num; i++)
 	{
-		const sp_native_t *native = pContext->GetRuntime()->GetNative(i);
+		const sp_native_t *native = pPlugin->runtime()->GetNative(i);
 		if (!native)
 			break;
 		if (native->status == SP_NATIVE_UNBOUND &&
@@ -1425,11 +1415,10 @@ void CPluginManager::TryRefreshDependencies(CPlugin *pPlugin)
 	/* Find any unbound natives
 	 * Right now, these are not allowed
 	 */
-	IPluginContext *pContext = pPlugin->GetBaseContext();
-	uint32_t num = pContext->GetNativesNum();
+	uint32_t num = pPlugin->runtime()->GetNativesNum();
 	for (unsigned int i=0; i<num; i++)
 	{
-		const sp_native_t *native = pContext->GetRuntime()->GetNative(i);
+		const sp_native_t *native = pPlugin->runtime()->GetNative(i);
 		if (!native)
 			break;
 		if (native->status == SP_NATIVE_UNBOUND &&
@@ -1535,12 +1524,9 @@ void CPluginManager::UnloadPluginImpl(CPlugin *pPlugin)
 	delete pPlugin;
 }
 
-IPlugin *CPluginManager::FindPluginByContext(const sp_context_t *ctx)
+SMPlugin *CPluginManager::FindPluginByContext(IPluginContext *pContext)
 {
-	IPlugin *pPlugin;
-	IPluginContext *pContext;
-
-	pContext = reinterpret_cast<IPluginContext *>(const_cast<sp_context_t *>(ctx));
+	SMPlugin *pPlugin;
 
 	if (pContext->GetKey(2, (void **)&pPlugin))
 	{
@@ -1550,7 +1536,7 @@ IPlugin *CPluginManager::FindPluginByContext(const sp_context_t *ctx)
 	return NULL;
 }
 
-CPlugin *CPluginManager::GetPluginByCtx(const sp_context_t *ctx)
+CPlugin *CPluginManager::GetPluginByCtx(IPluginContext *ctx)
 {
 	return (CPlugin *)FindPluginByContext(ctx);
 }
@@ -1981,7 +1967,7 @@ void CPluginManager::OnRootConsoleCommand(const char *cmdname, const ICommandArg
 					rootmenu->ConsolePrint("  Timestamp: %s", pl->GetDateTime());
 				}
 
-				if (IPluginRuntime *runtime = pl->GetRuntime()) {
+				if (auto runtime = pl->runtime()) {
 				  unsigned char *pCodeHash = runtime->GetCodeHash();
 				  unsigned char *pDataHash = runtime->GetDataHash();
 
@@ -2355,9 +2341,9 @@ public:
 		return g_PluginSys.UnloadPlugin(plugin);
 	}
 
-	IPlugin *FindPluginByContext(const sp_context_t *ctx) override
+	IPlugin *FindPluginByContext(IPluginContext *ctx) override
 	{
-		return g_PluginSys.FindPluginByContext(ctx);
+		return g_PluginSys.FindPluginByContext(ctx->GetBaseRuntime());
 	}
 
 	unsigned int GetPluginCount() override
@@ -2418,3 +2404,4 @@ IPluginManager *CPluginManager::GetOldAPI()
 {
 	return &sOldPluginAPI;
 }
+

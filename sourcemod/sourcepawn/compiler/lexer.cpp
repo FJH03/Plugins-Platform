@@ -18,8 +18,6 @@
  *  2.  Altered source versions must be plainly marked as such, and must not be
  *      misrepresented as being the original software.
  *  3.  This notice may not be removed or altered from any source distribution.
- *
- *  Version: $Id$
  */
 #include <assert.h>
 #include <ctype.h>
@@ -255,7 +253,7 @@ Lexer::SynthesizeIncludePathToken()
  *  o  at least one digit must follow the period; "6." is not a valid number,
  *     you should write "6.0"
  */
-void Lexer::lex_float(full_token_t* tok, cell_t whole) {
+void Lexer::lex_float(full_token_t* tok, double whole) {
     double fnum = whole;
 
     double ffrac = 0.0;
@@ -988,15 +986,230 @@ void Lexer::HandleMultiLineComment() {
     }
 }
 
-void Lexer::packedstring(full_token_t* tok, char term) {
-    std::string data;
+// Minimal multiline string verification, mainly targeting closing quotes.
+bool Lexer::multilinestring_get_indent(std::string& indent, const unsigned char*& end, int quote_count)
+{
+    auto start_pos = char_stream();
+    auto line_pos = char_stream();
+    end = char_stream();
+
+    bool only_indent = true;
+    int current_quotes = 0;
+
     while (true) {
         char c = peek();
-        if (c == term || c == 0)
+        if (c == 0)
+            return false;
+
+        if (c == '\"') {
+            if (++current_quotes == quote_count) {
+                if (!only_indent)
+                    return false;
+                break;
+            }
+            advance();
+            continue;
+        }
+
+        current_quotes = 0;
+
+        if (IsNewline(c)) {
+            if (advance() == '\r' && !match_char('\n'))
+                return false;
+            line_pos = char_stream();
+            end = char_stream();
+            only_indent = true;
+            continue;
+        } else {
+            only_indent = only_indent && IsSpace(c);
+        }
+
+        advance();
+    }
+
+    backtrack(line_pos);
+
+    while (true) {
+        char c = peek();
+        if (IsSpace(c)) {
+            indent.push_back(c);
+            advance();
+        } else {
             break;
+        }
+    }
+
+    backtrack(start_pos);
+    return true;
+}
+
+void Lexer::multilinestring_multi(std::string* data, int quote_count) {
+    const unsigned char* end = nullptr;
+    std::string indent;
+    if (!multilinestring_get_indent(indent, end, quote_count)) {
+        report(37);
+        return;
+    }
+
+    const unsigned char* quote_pos = nullptr;
+    bool ate_indent = false;
+    bool only_indent = true;
+
+    while (true) {
+        char c = peek();
+        assert(c != 0);
+
+        if (!ate_indent) {
+            ate_indent = true;
+            if (!IsNewline(c)) {
+                for (char w : indent) {
+                    if (w != c) {
+                        report(37);
+                        return;
+                    }
+                    c = advance();
+                }
+                c = peek();
+            }
+        }
+
+        if (c == '\"') {
+            if (quote_pos) {
+                if (char_stream() - quote_pos == quote_count-1) {
+                    break;
+                }
+            } else {
+                quote_pos = char_stream();
+            }
+            advance();
+            continue;
+        } else {
+            if (quote_pos) {
+                for (int i = 0, count = (char_stream() - quote_pos); i < count; i++) {
+                    data->push_back('\"');
+                }
+                quote_pos = nullptr;
+            }
+            only_indent = only_indent && (IsSpace(c) || IsNewline(c));
+        }
+
+        if (IsNewline(c)) {
+            if (advance() == '\r' && !match_char('\n'))
+                return;
+            if (char_stream() == end) {
+                if (only_indent) {
+                    // A fix for empty lines...
+                    data->push_back('\n');
+                }
+                // skip any whitespace....
+                for (int i = indent.length() + quote_count - 1; i; --i) {
+                    advance();
+                }
+                return;
+            }
+            data->push_back('\n');
+            ate_indent = false;
+            only_indent = true;
+            quote_pos = nullptr;
+            continue;
+        }
+
+        packedstring_char(data);
+    }
+}
+
+void Lexer::multilinestring_single(std::string* data, int quote_count) {
+    const unsigned char* quote_pos = nullptr;
+    while (true) {
+        char c = peek();
+        if (c == 0)
+            return;
+        if (c == '\"') {
+            if (quote_pos) {
+                if (char_stream() - quote_pos == quote_count - 1) {
+                    // we peek()'d the last quote!
+                    return;
+                }
+            } else {
+                quote_pos = char_stream();
+            }
+            advance();
+            continue;
+        } else {
+            if (quote_pos) {
+                // push those quotes we were skipping since it's not the end...
+                for (int i = 0, count = (char_stream() - quote_pos); i < count; i++) {
+                    data->push_back('\"');
+                }
+                quote_pos = nullptr;
+            }
+        }
         if (c == '\\') {
             if (MaybeHandleLineContinuation())
                 continue;
+        }
+        if (IsNewline(c))
+            break;
+        packedstring_char(data);
+    }
+}
+
+// On success, char_stream() will be pointing to the last double-quote character.  This is so we don't have to edit LexStringLiteral() 😇
+void Lexer::multilinestring(std::string* data) {
+    assert(peek() == '\"' && peek2() == '\"');
+    advance();
+    advance();
+
+    int quote_count = 3;
+
+    while (true) {
+        char c = peek();
+        if (c == 0)
+            return;
+        if (c != '\"')
+            break;
+        quote_count += 1;
+        advance();
+    }
+
+    if (IsNewline(peek())) {
+        if (advance() == '\r' && !match_char('\n'))
+            return;
+        multilinestring_multi(data, quote_count);
+    } else {
+        multilinestring_single(data, quote_count);
+    }
+}
+
+void Lexer::packedstring(full_token_t* tok, char term) {
+    std::string data;
+    bool might_be_multiline = true;
+    while (true) {
+        char c = peek();
+        if (might_be_multiline && c == term) {
+            // packedstring() starts at the character after the opening-quote
+            // so first peek() found the second quote...
+            // and maybe peek2() will find a third...
+            if (peek2() == term) {
+                multilinestring(&data);
+                break;
+            }
+        }
+        if (c == term || c == 0)
+            break;
+        might_be_multiline = false;
+        if (c == '\\') {
+            if (MaybeHandleLineContinuation())
+            {
+                // New line was escaped, eat all leading whitespace to match previous behavior
+                while (true) {
+                    char c = peek();
+                    if (!IsSpace(c))
+                        break;
+                    advance();
+                }
+                continue;
+            }
         }
         if (IsNewline(c))
             break;
@@ -1191,6 +1404,7 @@ const char* sc_tokens[] = {"*=",
                            ";",
                            ";",
                            "-integer value-",
+                           "-number value-",
                            "-float value-",
                            "-identifier-",
                            "-label-",
@@ -1640,7 +1854,7 @@ void Lexer::LexIntoToken(full_token_t* tok) {
 }
 
 bool Lexer::lex_number(full_token_t* tok) {
-    cell value = 0;
+    uint64_t value = 0;
 
     int base = 10;
     int ndigits = 0;
@@ -1684,7 +1898,18 @@ bool Lexer::lex_number(full_token_t* tok) {
         if (c == '_')
             continue;
 
-        value = (value * base) + digit;
+        if (!IsUint64MultiplySafe(value, base)) {
+            report(135);
+            break;
+        }
+        value *= base;
+
+        if (!IsUint64AddSafe(value, digit)) {
+            report(135);
+            break;
+        }
+        value += digit;
+
         ndigits++;
     }
 
@@ -1706,8 +1931,17 @@ bool Lexer::lex_number(full_token_t* tok) {
         backtrack();
     }
 
-    tok->id = tNUMBER;
-    tok->numeric_value = value;
+    int64_t i64 = value;
+
+    if (value > UINT_MAX ||
+        (base == 10 && (i64 < INT_MIN || i64 > INT_MAX)))
+    {
+        tok->id = tNUMBER64;
+        tok->atom = cc_.atom(std::to_string(value));
+    } else {
+        tok->id = tNUMBER;
+        tok->numeric_value = value;
+    }
     return true;
 }
 
@@ -2098,7 +2332,7 @@ cell Lexer::litchar(int flags, bool* is_codepoint) {
                 // Restore the character position and treat this as a raw byte.
                 state_.pos = saved_pos;
             }
-        } 
+        }
 
         assert(raw >= 0);
         advance();
@@ -2498,10 +2732,17 @@ std::string Lexer::SkimMacroArgument() {
 
     const unsigned char* start = nullptr;
     int nparens = 0;
+    char closer = 0;
     while (freading()) {
         char c = peek();
         if (c == '\0')
             break;
+        if (closer) {
+            if (c == closer)
+                closer = 0;
+            advance();
+            continue;
+        }
         if (c == '/' && peek2() == '/') {
             AddText(&text, &start, char_stream(), ' ');
             HandleSingleLineComment();
@@ -2526,6 +2767,8 @@ std::string Lexer::SkimMacroArgument() {
             if (nparens == 0)
                 break;
             nparens--;
+        } else if (c == '"') {
+            closer = c;
         } else if (c == ',' && !nparens) {
             break;
         }

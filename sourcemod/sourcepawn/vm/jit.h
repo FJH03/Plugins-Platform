@@ -1,143 +1,181 @@
-// vim: set ts=8 sts=2 sw=2 tw=99 et:
+// vim: set ts=8 sts=4 sw=4 tw=99 et:
 //
 // This file is part of SourcePawn.
-// 
+//
 // SourcePawn is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // SourcePawn is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with SourcePawn.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef _include_sourcepawn_jit_h_
 #define _include_sourcepawn_jit_h_
 
-#include <sp_vm_types.h>
-#include <sp_vm_api.h>
 #include <amtl/am-vector.h>
-#include "macro-assembler.h"
-#include "opcodes.h"
-#include "pool-allocator.h"
-#include "outofline-asm.h"
-#include "pcode-visitor.h"
+#include <sp_vm_api.h>
+#include <sp_vm_types.h>
 #include "compiled-function.h"
 #include "control-flow.h"
+#include "macro-assembler.h"
+#include "opcodes.h"
+#include "pcode-visitor.h"
 
 namespace sp {
 
 using namespace SourcePawn;
 
 class PluginRuntime;
-class PluginContext;
-class LegacyImage;
+typedef PluginRuntime PluginContext;
+class SmxImage;
 
 struct BackwardJump {
-  // The pc at the jump instruction (i.e. after it).
-  uint32_t pc;
-  // The cip of the jump.
-  const cell_t* cip;
-  // The offset of the timeout thunk. This is filled in at the end.
-  uint32_t timeout_offset;
+    // The pc at the jump instruction (i.e. after it).
+    uint32_t pc;
+    // The cip of the jump.
+    const cell_t* cip;
+    // The offset of the timeout thunk. This is filled in at the end.
+    uint32_t timeout_offset;
 
-  BackwardJump()
-  {}
-  BackwardJump(uint32_t pc, const cell_t* cip)
-   : pc(pc),
-     cip(cip)
-  {}
+    BackwardJump() {
+    }
+    BackwardJump(uint32_t pc, const cell_t* cip)
+     : pc(pc)
+     , cip(cip) {
+    }
 };
 
 class CompilerBase : public PcodeVisitor
 {
-  friend class ErrorPath;
+    friend class ErrorPath;
 
- public:
-  CompilerBase(PluginRuntime* rt, MethodInfo* method);
-  virtual ~CompilerBase();
+  public:
+    CompilerBase(PluginRuntime* rt, MethodInfo* method);
+    virtual ~CompilerBase();
 
-  static CompiledFunction* Compile(PluginContext* cx, RefPtr<MethodInfo> method, int* err);
+    static CompiledFunction* Compile(PluginContext* cx, RefPtr<MethodInfo> method, int* err);
 
-  int error() const {
-    return error_;
-  }
+    int error() const {
+        return error_;
+    }
 
- protected:
-  CompiledFunction* emit();
+    static bool IsSupported();
+    static bool SupportsPlugin(PluginContext* cx);
 
-  virtual void emitPrologue() = 0;
-  virtual void emitThrowPath(int err) = 0;
-  virtual void emitErrorHandlers() = 0;
-  virtual void emitOutOfBoundsErrorPath(OutOfBoundsErrorPath* path) = 0;
-  virtual void emitDebugBreakHandler() = 0;
+    bool visitJUMP(cell_t offset) override;
 
-  // Helpers.
-  static int CompileFromThunk(PluginContext* cx, cell_t pcode_offs, void** addrp, uint8_t* pc);
-  static void* find_entry_fp();
-  static void InvokeReportError(int err);
-  static void InvokeReportTimeout();
-  static void PatchCallThunk(uint8_t* pc, void* target);
+  protected:
+    CompiledFunction* emit();
 
- protected:
-  cell_t readCell();
+    virtual void emitPrologue() = 0;
+    virtual void emitThrowPath(int err) = 0;
+    virtual void emitErrorHandlers() = 0;
+    virtual void emitDebugBreakHandler() = 0;
 
-  // Map a return address (i.e. an exit point from a function) to its source
-  // cip. This lets us avoid tracking the cip during runtime. These are
-  // sorted by definition since we assemble and emit in forward order.
-  void emitCipMapping(const cell_t* cip) {
-    CipMapEntry entry;
-    entry.cipoffs = uintptr_t(cip) - uintptr_t(code_start_);
-    entry.pcoffs = masm.pc();
-    cip_map_.push_back(entry);
-  }
+    struct CallThunk;
+    virtual void emitCallThunk(CallThunk* thunk) = 0;
 
-  bool isNextBlock(Block* target) {
-    return target->id() == (block_->id() + 1);
-  }
-  bool isBackedge(Block* target) {
-    return target->id() <= block_->id();
-  }
+    struct OutOfBoundsError;
+    virtual void emitOutOfBoundsError(OutOfBoundsError* path) = 0;
 
- protected:
-  void emitErrorPath(ErrorPath* path);
-  void emitThrowPathIfNeeded(int err);
+    // Helpers.
+    static int CompileFromThunk(PluginContext* cx, cell_t pcode_offs, void** addrp, uint8_t* pc);
+    static void* find_entry_fp();
+    static void InvokeReportError(int err);
+    static void InvokeReportTimeout();
+    static void PatchCallThunk(uint8_t* pc, void* target);
 
-  void reportError(int err);
+  protected:
+    cell_t readCell();
 
- protected:
-  Environment* env_;
-  PluginRuntime* rt_;
-  PluginContext* context_;
-  LegacyImage* image_;
-  PoolScope scope_;
-  ke::RefPtr<MethodInfo> method_info_;
-  ke::RefPtr<ControlFlowGraph> graph_;
-  ke::RefPtr<Block> block_;
-  int error_;
-  uint32_t pcode_start_;
-  const cell_t* code_start_;
-  const cell_t* op_cip_;
+    // Map a return address (i.e. an exit point from a function) to its source
+    // cip. This lets us avoid tracking the cip during runtime. These are
+    // sorted by definition since we assemble and emit in forward order.
+    void emitCipMapping(const cell_t* cip) {
+        CipMapEntry entry;
+        entry.cipoffs = uintptr_t(cip) - uintptr_t(code_start_);
+        entry.pcoffs = masm.pc();
+        cip_map_.push_back(entry);
+    }
 
-  MacroAssembler masm;
+    bool isNextBlock(Block* target) {
+        return target->id() == (block_->id() + 1);
+    }
+    bool isBackedge(Block* target) {
+        return target->id() <= block_->id();
+    }
 
-  std::vector<OutOfLinePath*> ool_paths_;
+  protected:
+    struct ErrorThunk;
+    void emitErrorThunk(ErrorThunk* path);
+    void emitThrowPathIfNeeded(int err);
 
-  Label throw_timeout_;
-  Label throw_error_code_[SP_MAX_ERROR_CODES];
-  Label report_error_;
-  Label return_reported_error_;
-  Label unbound_native_error_;
+    void reportError(int err);
+    cell_t StackOffset(cell_t offset);
 
-  // Debugging.
-  Label debug_break_;
-  std::string debug_name_;
+  protected:
+    Environment* env_;
+    PluginRuntime* rt_;
+    PluginContext* context_;
+    SmxImage* image_;
+    ke::RefPtr<MethodInfo> method_info_;
+    ke::RefPtr<ControlFlowGraph> graph_;
+    ke::RefPtr<Block> block_;
+    int error_;
+    uint32_t pcode_start_;
+    const cell_t* code_start_;
+    const cell_t* op_cip_;
 
-  std::vector<BackwardJump> backward_jumps_;
-  std::vector<CipMapEntry> cip_map_;
+    MacroAssembler masm;
+
+    struct CallThunk {
+        explicit CallThunk(cell_t pcode_offset)
+          : pcode_offset(pcode_offset)
+        {}
+        CallThunk(CallThunk&& other) = default;
+        CallThunk& operator =(CallThunk& other) = default;
+
+        PatchCodeLabel label;
+        cell_t pcode_offset;
+    };
+    std::vector<CallThunk> call_thunks_;
+
+    struct ErrorThunk {
+        explicit ErrorThunk(const cell_t* cip, int err)
+          : cip(cip), err(err)
+        {}
+        Label label;
+        const cell_t* cip;
+        int err;
+    };
+    std::vector<ErrorThunk> error_thunks_;
+
+    struct OutOfBoundsError {
+        OutOfBoundsError(const cell_t* cip, cell_t bounds)
+          : cip(cip), bounds(bounds)
+        {}
+        Label label;
+        const cell_t* cip;
+        cell_t bounds;
+    };
+    std::vector<OutOfBoundsError> bounds_errors_;
+
+    Label throw_timeout_;
+    Label report_error_;
+    Label throw_error_code_[SP_MAX_ERROR_CODES];
+    Label return_reported_error_;
+
+    // Debugging.
+    Label debug_break_;
+    std::string debug_name_;
+
+    std::vector<BackwardJump> backward_jumps_;
+    std::vector<CipMapEntry> cip_map_;
 };
 
 } // namespace sp

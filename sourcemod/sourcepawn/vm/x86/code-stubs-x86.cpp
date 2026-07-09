@@ -1,7 +1,7 @@
-// vim: set sts=2 ts=8 sw=2 tw=99 et:
-// 
+// vim: set sts=4 ts=8 sw=4 tw=99 et:
+//
 // Copyright (C) 2006-2015 AlliedModders LLC
-// 
+//
 // This file is part of SourcePawn. SourcePawn is free software: you can
 // redistribute it and/or modify it under the terms of the GNU General Public
 // License as published by the Free Software Foundation, either version 3 of
@@ -12,10 +12,10 @@
 //
 #include <sp_vm_api.h>
 #include "code-stubs.h"
-#include "linking.h"
-#include "jit_x86.h"
-#include "environment.h"
 #include "debug-metadata.h"
+#include "environment.h"
+#include "jit_x86.h"
+#include "linking.h"
 
 using namespace sp;
 using namespace SourcePawn;
@@ -23,85 +23,71 @@ using namespace SourcePawn;
 #define __ masm.
 
 bool
-CodeStubs::InitializeFeatureDetection()
-{
-  MacroAssembler masm;
-  MacroAssembler::GenerateFeatureDetection(masm);
-  CodeChunk code = LinkCode(env_, masm, "<cpu feature detection>", {});
-  if (!code.address())
-    return false;
-  MacroAssembler::RunFeatureDetection(code.address());
-  return true;
-}
+CodeStubs::CompileInvokeStub() {
+    MacroAssembler masm;
+    __ enterFrame(JitFrameType::Entry, 0);
 
+    __ push(esi);
+    __ push(edi);
+    __ push(ebx);
 
-bool
-CodeStubs::CompileInvokeStub()
-{
-  MacroAssembler masm;
-  __ enterFrame(JitFrameType::Entry, 0);
+    static const intptr_t kContextOffset = 8 + 0 * sizeof(intptr_t);
+    static const intptr_t kCodeOffset = 8 + 1 * sizeof(intptr_t);
+    static const intptr_t kRvalOffset = 8 + 2 * sizeof(intptr_t);
+    static const intptr_t kFpOffsetToPreAlignedSp = -20;
 
-  __ push(esi);
-  __ push(edi);
-  __ push(ebx);
+    // ebx = cx
+    __ movl(ebx, Operand(ebp, kContextOffset));
 
-  static const intptr_t kContextOffset = 8 + 0 * sizeof(intptr_t);
-  static const intptr_t kCodeOffset = 8 + 1 * sizeof(intptr_t);
-  static const intptr_t kRvalOffset = 8 + 2 * sizeof(intptr_t);
-  static const intptr_t kFpOffsetToPreAlignedSp = -20;
+    // ecx = code
+    __ movl(ecx, Operand(ebp, kCodeOffset));
 
-  // ebx = cx
-  __ movl(ebx, Operand(ebp, kContextOffset));
+    // eax = cx->memory
+    __ movl(eax, Operand(ebx, PluginContext::offsetOfMemory()));
 
-  // ecx = code
-  __ movl(ecx, Operand(ebp, kCodeOffset));
+    // Set up run-time registers.
+    __ movl(edi, Operand(ebx, PluginContext::offsetOfSp()));
+    __ addl(edi, eax);
+    __ movl(esi, eax);
+    __ movl(ebx, edi);
 
-  // eax = cx->memory
-  __ movl(eax, Operand(ebx, PluginContext::offsetOfMemory()));
+    // Align the stack.
+    __ andl(esp, 0xfffffff0);
 
-  // Set up run-time registers.
-  __ movl(edi, Operand(ebx, PluginContext::offsetOfSp()));
-  __ addl(edi, eax);
-  __ movl(esi, eax);
-  __ movl(ebx, edi);
+    // Call into plugin.
+    __ call(ecx);
 
-  // Align the stack.
-  __ andl(esp, 0xfffffff0);
+    // Store the rval.
+    __ movl(ecx, Operand(ebp, kRvalOffset));
+    __ movl(Operand(ecx, 0), pri);
 
-  // Call into plugin.
-  __ call(ecx);
+    // Store latest stk. If we have an error code, we'll jump directly to here,
+    // so eax will already be set.
+    Label ret;
+    __ bind(&ret);
+    __ subl(stk, dat);
+    __ movl(ecx, Operand(ebp, kContextOffset));
+    __ movl(Operand(ecx, PluginContext::offsetOfSp()), stk);
 
-  // Store the rval.
-  __ movl(ecx, Operand(ebp, kRvalOffset));
-  __ movl(Operand(ecx, 0), pri);
+    // Restore stack.
+    __ lea(esp, Operand(ebp, kFpOffsetToPreAlignedSp));
 
-  // Store latest stk. If we have an error code, we'll jump directly to here,
-  // so eax will already be set.
-  Label ret;
-  __ bind(&ret);
-  __ subl(stk, dat);
-  __ movl(ecx, Operand(ebp, kContextOffset));
-  __ movl(Operand(ecx, PluginContext::offsetOfSp()), stk);
+    // Restore registers and gtfo.
+    __ pop(ebx);
+    __ pop(edi);
+    __ pop(esi);
+    __ leaveFrame();
+    __ ret();
 
-  // Restore stack.
-  __ lea(esp, Operand(ebp, kFpOffsetToPreAlignedSp));
+    // The universal emergency return will jump to here.
+    Label error;
+    __ bind(&error);
+    __ jmp(&ret);
 
-  // Restore registers and gtfo.
-  __ pop(ebx);
-  __ pop(edi);
-  __ pop(esi);
-  __ leaveFrame();
-  __ ret();
+    invoke_stub_ = LinkCode(env_, masm, "<jit invoke stub>", {});
+    if (!invoke_stub_.entry)
+        return false;
 
-  // The universal emergency return will jump to here.
-  Label error;
-  __ bind(&error);
-  __ jmp(&ret);
-
-  invoke_stub_ = LinkCode(env_, masm, "<jit invoke stub>", {});
-  if (!invoke_stub_.address())
-    return false;
-
-  return_stub_ = reinterpret_cast<uint8_t*>(invoke_stub_.address()) + error.offset();
-  return true;
+    return_stub_ = reinterpret_cast<uint8_t*>(invoke_stub_.entry) + error.offset();
+    return true;
 }

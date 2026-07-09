@@ -31,6 +31,8 @@
 
 #include "smn_keyvalues.h"
 
+#include <wchar.h>
+
 #include "sourcemod.h"
 #include "sourcemm_api.h"
 #include "sm_stringutil.h"
@@ -65,15 +67,51 @@ public:
 
 		delete pStk;
 	}
-	int CalcKVSizeR(KeyValues *pv)
+	unsigned int CalcKVSizeR(KeyValues *pValues)
 	{
-		CUtlBuffer buf;
-		int size;
+		unsigned int size = sizeof(KeyValues);
 
-		pv->RecursiveSaveToFile(buf, 0);
-		size = buf.TellMaxPut();
+		if (const char *pName = pValues->GetName())
+		{
+			size += strlen(pName) + 1;
+		}
 
-		buf.Purge();
+		switch (pValues->GetDataType())
+		{
+			case KeyValues::TYPE_STRING:
+			{
+				if (const char *pValue = pValues->GetString())
+				{
+					size += strlen(pValue) + 1;
+				}
+				break;
+			}
+			case KeyValues::TYPE_WSTRING:
+			{
+				if (const wchar_t *pValue = pValues->GetWString())
+				{
+					size += (wcslen(pValue) + 1) * sizeof(wchar_t);
+				}
+				break;
+			}
+			case KeyValues::TYPE_UINT64:
+			{
+				/* Stored in a separately-allocated 8-byte buffer, not the inline union. */
+				size += sizeof(uint64);
+				break;
+			}
+			default:
+			{
+				break;
+			}
+		}
+
+		/* Recurse into child keys/values. Siblings are handled by the loop, so
+		 * recursion depth stays bounded by the tree depth rather than its width. */
+		for (KeyValues *pSub = pValues->GetFirstSubKey(); pSub != NULL; pSub = pSub->GetNextKey())
+		{
+			size += CalcKVSizeR(pSub);
+		}
 
 		return size;
 	}
@@ -945,7 +983,7 @@ static cell_t smn_KvDeleteKey(IPluginContext *pContext, const cell_t *params)
 		return pContext->ThrowNativeError("Invalid key value handle %x (error %d)", hndl, herr);
 	}
 
-	if (pStk->pCurRoot.size() < 2)
+	if (pStk->pCurRoot.size() < 1)
 	{
 		return 0;
 	}
@@ -1038,7 +1076,7 @@ static cell_t smn_GetNameSymbol(IPluginContext *pContext, const cell_t *params)
 		return pContext->ThrowNativeError("Invalid key value handle %x (error %d)", hndl, herr);
 	}
 
-	if (pStk->pCurRoot.size() < 2)
+	if (pStk->pCurRoot.size() < 1)
 	{
 		return 0;
 	}
@@ -1111,6 +1149,38 @@ static cell_t smn_KvGetSectionSymbol(IPluginContext *pCtx, const cell_t *params)
 	}
 
 	return 1;
+}
+
+static cell_t KeyValues_Merge(IPluginContext *pContext, const cell_t *params)
+{
+#if SOURCE_ENGINE < SE_ORANGEBOX || SOURCE_ENGINE == SE_ALIENSWARM
+    // <OB doesn't have this function, and on ASW, we're still using the stock tier1 lib (with there being no source in the sdk)
+	return pContext->ThrowNativeError("KeyValues.Merge is not supported on this engine version");
+#else
+	Handle_t hndl_this = static_cast<Handle_t>(params[1]);
+	Handle_t hndl_other = static_cast<Handle_t>(params[2]);
+	HandleError herr;
+	HandleSecurity sec;
+	KeyValueStack *pStk_this, *pStk_other;
+
+	sec.pOwner = NULL;
+	sec.pIdentity = g_pCoreIdent;
+
+	if ((herr=handlesys->ReadHandle(hndl_this, g_KeyValueType, &sec, (void **)&pStk_this))
+		!= HandleError_None)
+	{
+		return pContext->ThrowNativeError("Invalid key value handle %x (error %d)", hndl_this, herr);
+	}
+	if ((herr=handlesys->ReadHandle(hndl_other, g_KeyValueType, &sec, (void **)&pStk_other))
+		!= HandleError_None)
+	{
+		return pContext->ThrowNativeError("Invalid key value handle %x (error %d)", hndl_other, herr);
+	}
+
+	pStk_this->pCurRoot.front()->RecursiveMergeKeyValues(pStk_other->pCurRoot.front());
+
+	return 1;
+#endif
 }
 
 static cell_t KeyValues_Import(IPluginContext *pContext, const cell_t *params)
@@ -1256,6 +1326,7 @@ REGISTER_NATIVES(keyvaluenatives)
 	{"KeyValues.ExportToFile",			smn_KeyValuesToFile},
 	{"KeyValues.ExportToString",		smn_KeyValuesToString},
 	{"KeyValues.ExportLength.get",		smn_KeyValuesExportLength},
+	{"KeyValues.Merge",					KeyValues_Merge},
 
 	{NULL,						NULL}
 };

@@ -33,6 +33,7 @@
 #include "errors.h"
 #include "expressions.h"
 #include "sctracker.h"
+#include "semantics-inl.h"
 #include "symbols.h"
 #include "value-inl.h"
 
@@ -45,6 +46,16 @@ CodeGenerator::CodeGenerator(CompileContext& cc, ParseTree* tree)
   : cc_(cc),
     tree_(tree)
 {
+    sp::Atom* atom = cc_.atom("float");
+    builtins_[atom] = &CodeGenerator::EmitFloatBuiltin;
+
+    names_ = new SmxNameTable(".names");
+    smx_data_ = new SmxDataSection(".data");
+    natives_ = new SmxNativeSection(".natives");
+    pubvars_ = new SmxPubvarSection(".pubvars");
+    code_ = new SmxCodeSection(".code");
+    publics_ = new SmxPublicSection(".publics");
+    rtti_ = std::make_unique<RttiBuilder>(cc, names_);
 }
 
 bool CodeGenerator::Generate() {
@@ -61,58 +72,54 @@ bool CodeGenerator::Generate() {
         AddDebugSymbols(&pair.second);
     }
 
+    if (!errors_.ok())
+        return false;
+
     AddDebugSymbols(&global_syms_);
 
-    return errors_.ok();
+    FinishSmx();
+    return true;
 }
 
-void
-CodeGenerator::AddDebugFile(const std::string& file)
-{
-    auto str = ke::StringPrintf("F:%x %s", asm_.position(), file.c_str());
-    debug_strings_.emplace_back(str.c_str(), str.size());
+void CodeGenerator::FinishSmx() {
+    // Set up the data section. Note pre-SourceMod 1.7, the |memsize| was
+    // computed as AMX::stp, which included the entire memory size needed to
+    // store the file. Here (in 1.7+), we allocate what is actually needed
+    // by the plugin.
+    smx_data_->header().datasize = data_size();
+    smx_data_->header().memsize = data_size() + DynamicMemorySize();
+    smx_data_->header().data = sizeof(sp_file_data_t);
+    smx_data_->setBlob(data_.dat(), data_.size());
+
+    // Set up the code section.
+    code_->header().codesize = asm_.size();
+    code_->header().cellsize = sizeof(cell);
+    code_->header().codeversion = SmxConsts::CODE_VERSION_TYPED_STACK;
+    code_->header().flags = CODEFLAG_DEBUG;
+    code_->header().main = 0;
+    code_->header().code = sizeof(sp_file_code_t);
+    code_->header().features = SmxConsts::kCodeFeatureDirectArrays |
+                               SmxConsts::kCodeFeatureHeapScopes |
+                               SmxConsts::kCodeFeatureNullFunctions |
+                               SmxConsts::kCodeFeatureTypedOps;
+    code_->setBlob(asm_.bytes(), asm_.size());
+
+    smx_.add(code_);
+    smx_.add(smx_data_);
+    smx_.add(publics_);
+    smx_.add(pubvars_);
+    smx_.add(natives_);
+    smx_.add(names_);
+    rtti_->finish(smx_);
 }
 
-void
-CodeGenerator::AddDebugLine(int linenr)
-{
-    auto str = ke::StringPrintf("L:%x %x", asm_.position(), linenr);
-    if (fun_) {
-        auto data = fun_->cg();
-        if (!data->dbgstrs)
-            data->dbgstrs = cc_.NewDebugStringList();
-        data->dbgstrs->emplace_back(str.c_str(), str.size());
-    } else {
-        debug_strings_.emplace_back(str.c_str(), str.size());
-    }
+void CodeGenerator::AddDebugLine(const token_pos_t& pos) {
+    auto line = cc_.sources()->GetLineAndCol(pos, nullptr);
+    rtti_->AddDebugLine(asm_.position(), line);
 }
 
 void CodeGenerator::AddDebugSymbol(Decl* decl, uint32_t pc) {
-    auto symname = decl->name()->chars();
-
-    std::optional<cell> addr;
-    if (auto fun = decl->as<FunctionDecl>()) {
-        addr.emplace(fun->cg()->label.offset());
-    } else if (auto var = decl->as<VarDeclBase>()) {
-        if (auto cv = var->as<ConstDecl>())
-            addr.emplace(cv->const_val());
-        else
-            addr.emplace(var->addr());
-    }
-
-    /* address tag:name codestart codeend ident vclass [tag:dim ...] */
-    auto string = ke::StringPrintf("S:%x %x:%s %x %x %x %x %x",
-                                   *addr, decl->type()->type_index(), symname, pc,
-                                   asm_.position(), decl->ident(), decl->vclass(), (int)decl->is_const());
-
-    if (fun_) {
-        auto data = fun_->cg();
-        if (!data->dbgstrs)
-            data->dbgstrs = cc_.NewDebugStringList();
-        data->dbgstrs->emplace_back(string.c_str(), string.size());
-    } else {
-        debug_strings_.emplace_back(string.c_str(), string.size());
-    }
+    rtti_->AddDebugVar(fun_, decl, pc, asm_.position());
 }
 
 void CodeGenerator::AddDebugSymbols(tr::vector<DebugSymbol>* list) {
@@ -129,12 +136,14 @@ CodeGenerator::EmitStmtList(StmtList* list)
         EmitStmt(stmt);
 }
 
-void
-CodeGenerator::EmitStmt(Stmt* stmt)
-{
+void CodeGenerator::EmitStmt(Stmt* stmt) {
+    std::list<std::pair<uint32_t, BuiltinType>> prev_used_temp_slots;
+
     if (fun_) {
-        AddDebugLine(stmt->pos().line);
+        AddDebugLine(stmt->pos());
         EmitBreak();
+
+        std::swap(prev_used_temp_slots, used_temp_slots_);
     }
 
     if (stmt->tree_has_heap_allocs())
@@ -164,15 +173,11 @@ CodeGenerator::EmitStmt(Stmt* stmt)
         }
         case StmtKind::BlockStmt: {
             auto s = stmt->to<BlockStmt>();
-            pushstacklist();
 
             {
                 AutoEnterScope locals(this, &local_syms_);
                 EmitStmtList(s);
             }
-
-            bool returns = s->flow_type() == Flow_Return;
-            popstacklist(!returns);
             break;
         }
         case StmtKind::AssertStmt: {
@@ -237,12 +242,16 @@ CodeGenerator::EmitStmt(Stmt* stmt)
 
     if (stmt->tree_has_heap_allocs())
         LeaveHeapScope();
+
+    if (fun_) {
+        free_temp_slots_.splice(free_temp_slots_.end(), used_temp_slots_);
+        std::swap(used_temp_slots_, prev_used_temp_slots);
+    }
 }
 
-void
-CodeGenerator::EmitChangeScopeNode(ChangeScopeNode* node)
-{
-    AddDebugFile(node->file()->chars());
+void CodeGenerator::EmitChangeScopeNode(ChangeScopeNode* node) {
+    rtti_->AddDebugFile(asm_.position(), node->file()->chars());
+
     if (static_scopes_.count(node->scope())) {
         // We've already seen this scope before, which means we entered other
         // includes and then returned to this file.
@@ -273,7 +282,7 @@ void CodeGenerator::EmitVarDecl(VarDeclBase* decl) {
     if (decl->type()->isPstruct()) {
         EmitPstruct(decl);
     } else {
-        if (decl->ident() != iCONSTEXPR) {
+        if (!decl->as<ConstDecl>()) {
             if (decl->vclass() == sLOCAL)
                 EmitLocalVar(decl);
             else
@@ -283,6 +292,12 @@ void CodeGenerator::EmitVarDecl(VarDeclBase* decl) {
 
     if (decl->is_public() || decl->is_used())
         EnqueueDebugSymbol(decl, asm_.position());
+
+    if (decl->is_public()) {
+        sp_file_pubvars_t& pubvar = pubvars_->add();
+        pubvar.address = decl->addr();
+        pubvar.name = names_->add(decl->name());
+    }
 }
 
 void CodeGenerator::EmitGlobalVar(VarDeclBase* decl) {
@@ -290,26 +305,32 @@ void CodeGenerator::EmitGlobalVar(VarDeclBase* decl) {
 
     __ bind_to(decl->label(), data_.dat_address());
 
-    if (decl->type()->isArray() || (decl->ident() == iVARIABLE && decl->type()->isEnumStruct())) {
+    if (decl->type()->isArray() || decl->type()->isEnumStruct()) {
         ArrayData array;
         BuildCompoundInitializer(decl, &array, data_.dat_address());
 
         data_.Add(std::move(array.iv));
         data_.Add(std::move(array.data));
         data_.AddZeroes(array.zeroes);
-    } else if (decl->ident() == iVARIABLE) {
-        cell_t cells = 1;
-        if (auto es = decl->type()->asEnumStruct())
-            cells = es->array_size();
-
-        // TODO initialize ES
-        assert(!init || init->right()->val().ident == iCONSTEXPR);
-        if (init)
-            data_.Add(init->right()->val().constval());
-        else
-            data_.AddZeroes(cells);
     } else {
-        assert(false);
+        if (init) {
+            if (auto n64 = init->right()->as<Number64Expr>()) {
+                Int64CellUnion u(*n64->ToInt64());
+                data_.Add(u.cells[0]);
+                data_.Add(u.cells[1]);
+            } else {
+                assert(init->right()->val().ident == iCONSTEXPR);
+                data_.Add(init->right()->val().constval());
+            }
+        } else {
+            cell_t cells = 1;
+            if (auto es = decl->type()->asEnumStruct())
+                cells = es->array_size();
+            else if (decl->type()->isInt64())
+                cells = 2;
+
+            data_.AddZeroes(cells);
+        }
     }
 }
 
@@ -319,38 +340,45 @@ void CodeGenerator::EmitLocalVar(VarDeclBase* decl) {
     bool is_struct = decl->type()->isEnumStruct();
     bool is_array = decl->type()->isArray();
 
-    if (!is_array && !is_struct) {
-        markstack(decl, MEMUSE_STATIC, 1);
-        decl->BindAddress(-current_stack_ * sizeof(cell));
+    int num_cells;
+    if (decl->type()->isBuiltin(BuiltinType::Int64))
+        num_cells = 2;
+    else
+        num_cells = 1;
 
+    int32_t slot = rtti_->AddLocalSlot(&locals_, decl->type());
+    decl->BindAddress(slot);
+
+    if (!is_array && !is_struct) {
         if (init) {
             const auto& val = init->right()->val();
-            if (init->assignop().sym) {
-                EmitExpr(init->right());
-
-                value tmp = val;
-                EmitUserOp(init->assignop(), &tmp);
-                __ emit(OP_PUSH_PRI);
-            } else if (val.ident == iCONSTEXPR) {
-                __ emit(OP_PUSH_C, val.constval());
+            if (val.ident == iCONSTEXPR) {
+                __ emit(OP_STOR_S_C, slot, val.constval());
             } else {
                 EmitExpr(init->right());
-                __ emit(OP_PUSH_PRI);
+                if (num_cells == 1)
+                    __ emit(OP_STOR_S_PRI, slot);
+                else if (num_cells == 2)
+                    __ emit(OP_STOR_S_PRI_I64, slot);
+                else
+                    assert(false);
             }
-        } else {
+        } else if (num_cells == 2) {
+            __ emit(OP_ZERO_S_I64, slot);
+        } else if (num_cells == 1) {
             // Note: we no longer honor "decl" for scalars.
-            __ emit(OP_PUSH_C, 0);
+            __ emit(OP_ZERO_S, slot);
         }
     } else {
         // Note that genarray() pushes the address onto the stack, so we don't
         // need to call modstk() here.
         TrackHeapAlloc(decl, MEMUSE_DYNAMIC, 0);
-        markstack(decl, MEMUSE_STATIC, 1);
-        decl->BindAddress(-current_stack_ * sizeof(cell));
 
         auto init_rhs = decl->init_rhs();
         if (init_rhs && init_rhs->as<NewArrayExpr>()) {
             EmitExpr(init_rhs->as<NewArrayExpr>());
+            __ emit(OP_POP_PRI);
+            __ emit(OP_STOR_S_PRI, slot);
         } else if (!init_rhs || decl->type()->isArray() || is_struct) {
             ArrayData array;
             BuildCompoundInitializer(decl, &array, 0);
@@ -382,9 +410,10 @@ void CodeGenerator::EmitLocalVar(VarDeclBase* decl) {
                 array.zeroes = 0;
 
             __ emit(OP_HEAP, total_size * sizeof(cell));
-            __ emit(OP_PUSH_ALT);
             __ emit(OP_INITARRAY_ALT, iv_addr, iv_size, non_filled, array.zeroes, 0);
+            __ emit(OP_STOR_S_ALT, slot);
         } else if (StringExpr* ctor = init_rhs->as<StringExpr>()) {
+            assert(false);
             auto queue_size = data_.size();
             auto str_addr = data_.dat_address();
             data_.Add(ctor->text()->chars(), ctor->text()->length());
@@ -399,6 +428,8 @@ void CodeGenerator::EmitLocalVar(VarDeclBase* decl) {
                 __ emit(OP_GENARRAY, 1);
             __ const_pri(str_addr);
             __ copyarray(decl, cells * sizeof(cell));
+        } else {
+            assert(false);
         }
     }
 }
@@ -468,7 +499,7 @@ CodeGenerator::EmitExpr(Expr* expr)
             EmitTernaryExpr(expr->to<TernaryExpr>());
             break;
         case ExprKind::CastExpr:
-            EmitExpr(expr->to<CastExpr>()->expr());
+            EmitCastExpr(expr->to<CastExpr>());
             break;
         case ExprKind::SymbolExpr:
             EmitSymbolExpr(expr->to<SymbolExpr>());
@@ -476,8 +507,7 @@ CodeGenerator::EmitExpr(Expr* expr)
         case ExprKind::RvalueExpr: {
             auto e = expr->to<RvalueExpr>();
             EmitExpr(e->expr());
-            value val = e->expr()->val();
-            EmitRvalue(&val);
+            EmitRvalue(e->expr()->val());
             break;
         }
         case ExprKind::CommaExpr: {
@@ -519,14 +549,17 @@ CodeGenerator::EmitExpr(Expr* expr)
         case ExprKind::DefaultArgExpr:
             EmitDefaultArgExpr(expr->to<DefaultArgExpr>());
             break;
-        case ExprKind::CallUserOpExpr:
-            EmitCallUserOpExpr(expr->to<CallUserOpExpr>());
-            break;
         case ExprKind::NewArrayExpr:
             EmitNewArrayExpr(expr->to<NewArrayExpr>());
             break;
         case ExprKind::NamedArgExpr:
             EmitExpr(expr->to<NamedArgExpr>()->expr);
+            break;
+        case ExprKind::Number64Expr:
+            EmitNumber64Expr(expr->to<Number64Expr>());
+            break;
+        case ExprKind::SimpleCastExpr:
+            EmitSimpleCastExpr(expr->to<SimpleCastExpr>());
             break;
 
         default:
@@ -545,8 +578,8 @@ CodeGenerator::EmitTest(Expr* expr, bool jump_on_true, Label* target)
             if (EmitUnaryExprTest(expr->to<UnaryExpr>(), jump_on_true, target))
                 return;
             break;
-        case ExprKind::ChainedCompareExpr:
-            if (EmitChainedCompareExprTest(expr->to<ChainedCompareExpr>(), jump_on_true, target))
+        case ExprKind::BinaryExpr:
+            if (EmitBinaryExprTest(expr->to<BinaryExpr>(), jump_on_true, target))
                 return;
             break;
         case ExprKind::CommaExpr: {
@@ -561,6 +594,8 @@ CodeGenerator::EmitTest(Expr* expr, bool jump_on_true, Label* target)
 
     EmitExpr(expr);
 
+    assert(!expr->val().type()->isInt64());
+
     if (jump_on_true)
         __ emit(OP_JNZ, target);
     else
@@ -570,22 +605,34 @@ CodeGenerator::EmitTest(Expr* expr, bool jump_on_true, Label* target)
 void
 CodeGenerator::EmitUnary(UnaryExpr* expr)
 {
-    EmitExpr(expr->expr());
-
-    // Hack: abort early if the operation was already handled. We really just
-    // want to replace the UnaryExpr though.
-    if (expr->userop())
-        return;
+    auto inner = expr->expr();
+    EmitExpr(inner);
 
     switch (expr->token()) {
         case '~':
-            __ emit(OP_INVERT);
+            if (inner->val().type()->isInt64()) {
+                auto slot = AcquireTempSlot(BuiltinType::Int64);
+                __ emit(OP_INVERT_I64, slot);
+            } else {
+                __ emit(OP_INVERT);
+            }
             break;
         case '!':
+            if (inner->val().type()->isInt64())
+                __ emit(OP_TEST_I64);
+            else if (inner->val().type()->isFloat())
+                __ emit(OP_TEST_F32);
             __ emit(OP_NOT);
             break;
         case '-':
-            __ emit(OP_NEG);
+            if (inner->val().type()->isInt64()) {
+                auto slot = AcquireTempSlot(BuiltinType::Int64);
+                __ emit(OP_NEG_I64, slot);
+            } else if (inner->val().type()->isFloat()) {
+                __ emit(OP_NEG_F32);
+            } else {
+                __ emit(OP_NEG);
+            }
             break;
         default:
             assert(false);
@@ -595,9 +642,12 @@ CodeGenerator::EmitUnary(UnaryExpr* expr)
 bool
 CodeGenerator::EmitUnaryExprTest(UnaryExpr* expr, bool jump_on_true, Label* target)
 {
-    if (!expr->userop() && expr->token() == '!') {
-        EmitTest(expr->expr(), !jump_on_true, target);
-        return true;
+    if (expr->token() == '!') {
+        auto inner = expr->expr();
+        if (!inner->val().type()->isInt64()) {
+            EmitTest(expr->expr(), !jump_on_true, target);
+            return true;
+        }
     }
     return false;
 }
@@ -608,76 +658,66 @@ CodeGenerator::EmitIncDec(IncDecExpr* expr)
     EmitExpr(expr->expr());
 
     const auto& val = expr->expr()->val();
-    auto& userop = expr->userop();
-    value tmp = val;
 
-    if (expr->prefix()) {
-        if (val.ident != iACCESSOR) {
-            if (userop.sym) {
-                EmitUserOp(userop, &tmp);
-            } else {
-                if (expr->token() == tINC)
-                    EmitInc(&tmp); /* increase variable first */
-                else
-                    EmitDec(&tmp);
-            }
-            EmitRvalue(&tmp);  /* and read the result into PRI */
+    Type* type = val.type();
+    if (type->isReference())
+        type = type->inner();
+
+    cell_t inc_int64_slot = -1;
+    if (type->isInt64()) {
+        Int64CellUnion u(expr->token() == tINC ? 1 : -1);
+        inc_int64_slot = AcquireTempSlot(BuiltinType::Int64);
+        __ emit(OP_STOR_S_C_I64, inc_int64_slot, u.cells[0], u.cells[1]);
+    }
+
+    // Save base address if needed.
+    if (!val.canRematerialize())
+        __ emit(OP_PUSH_PRI);
+
+    EmitRvalue(val);
+
+    bool want_pre_value = !(expr->prefix() || expr->discard());
+    if (want_pre_value) {
+        if (type->isInt64()) {
+            cell_t pre_slot = AcquireTempSlot(BuiltinType::Int64);
+            __ emit(OP_ADDR_ALT, pre_slot);
+            __ emit(OP_MOVE_I64);
+            __ emit(OP_PUSH_ALT);
         } else {
             __ emit(OP_PUSH_PRI);
-            InvokeGetter(val.accessor());
-            if (userop.sym) {
-                EmitUserOp(userop, &tmp);
-            } else {
-                if (expr->token() == tINC)
-                    __ emit(OP_INC_PRI);
-                else
-                    __ emit(OP_DEC_PRI);
-            }
-            __ emit(OP_POP_ALT);
-            InvokeSetter(val.accessor(), TRUE);
         }
+    }
+
+    if (type->isInt64()) {
+        // alt is inc_slot, pri is original address.
+        // After this, pri = inc_slot.
+        __ emit(OP_ADDR_ALT, inc_int64_slot);
+        __ emit(OP_ADD_I64, inc_int64_slot);
+    } else if (type->isFloat()) {
+        float val = (expr->token() == tINC ? 1.0f : -1.0f);
+        __ emit(OP_CONST_ALT, sp_ftoc(val));
+        __ emit(OP_ADD_F32);
     } else {
-        if (val.ident == iARRAYCELL || val.ident == iARRAYCHAR || val.ident == iACCESSOR) {
-            // Save base address. Stack: [addr]
-            __ emit(OP_PUSH_PRI);
-            // Get pre-inc value.
-            EmitRvalue(val);
-            // Save pre-inc value, but swap its position with the address.
-            __ emit(OP_POP_ALT); // Stack: []
-            __ emit(OP_PUSH_PRI); // Stack: [val]
-            if (userop.sym) {
-                __ emit(OP_PUSH_ALT); // Stack: [val addr]
-                // Call the overload.
-                __ emit(OP_PUSH_PRI);
-                EmitCall(userop.sym, 1);
-                // Restore the address and emit the store.
-                __ emit(OP_POP_ALT);
-                EmitStore(&val);
-            } else {
-                if (val.ident != iACCESSOR)
-                    __ emit(OP_MOVE_PRI);
-                if (expr->token() == tINC)
-                    EmitInc(&val);
-                else
-                    EmitDec(&val);
-            }
-            __ emit(OP_POP_PRI);
-        } else {
-            // Much simpler case when we don't have to save the base address.
-            EmitRvalue(val);
-            __ emit(OP_PUSH_PRI);
-            if (userop.sym) {
-                __ emit(OP_PUSH_PRI);
-                EmitCall(userop.sym, 1);
-                EmitStore(&val);
-            } else {
-                if (expr->token() == tINC)
-                    EmitInc(&val);
-                else
-                    EmitDec(&val);
-            }
-            __ emit(OP_POP_PRI);
-        }
+        __ emit(expr->token() == tINC ? OP_INC_PRI : OP_DEC_PRI);
+    }
+
+    if (!val.canRematerialize()) {
+        // If want_pre_value, then ALT will have the "pre" value. Otherwise,
+        // it is the original lvalue address.
+        __ emit(OP_POP_ALT);
+    }
+
+    if (want_pre_value) {
+        // If we pushed the original lvalue address onto the stack, it's still
+        // there, and ALT has the "pre" value. In that case we need to swap
+        // them. Then ALT will have the address for the store operation, and
+        // we can later pop the return value into PRI.
+        if (!val.canRematerialize())
+            __ emit(OP_SWAP_ALT);
+        EmitStore(val, false /* save_pri */);
+        __ emit(OP_POP_PRI);
+    } else {
+        EmitStore(val, !expr->discard() /* save_pri */);
     }
 }
 
@@ -687,9 +727,7 @@ CodeGenerator::EmitBinary(BinaryExpr* expr)
     auto token = expr->token();
     auto left = expr->left();
     auto right = expr->right();
-    auto oper = expr->oper();
-
-    assert(!IsChainedOp(token));
+    auto oper = NormalizeBinaryToken(expr->token());
 
     // We emit constexprs in the |oper_| handler below.
     const auto& left_val = left->val();
@@ -719,7 +757,6 @@ CodeGenerator::EmitBinary(BinaryExpr* expr)
 
         if (expr->array_copy_length()) {
             assert(!oper);
-            assert(!expr->assignop().sym);
 
             __ emit(OP_PUSH_PRI);
             EmitExpr(right);
@@ -732,27 +769,19 @@ CodeGenerator::EmitBinary(BinaryExpr* expr)
     assert(!expr->array_copy_length());
     assert(!left_val.type()->isArray());
 
-    EmitBinaryInner(oper, expr->userop(), left, right);
+    EmitBinaryInner(expr, oper, left, right);
 
     if (IsAssignOp(token)) {
         if (saved_lhs)
             __ emit(OP_POP_ALT);
 
-        auto tmp = left_val;
-        if (expr->assignop().sym)
-            EmitUserOp(expr->assignop(), nullptr);
-        EmitStore(&tmp);
+        EmitStore(left_val);
     }
 }
 
-void
-CodeGenerator::EmitBinaryInner(int oper_tok, const UserOperation& in_user_op, Expr* left,
-                               Expr* right)
-{
+void CodeGenerator::EmitBinaryInner(Expr* expr, int oper_tok, Expr* left, Expr* right) {
     const auto& left_val = left->val();
     const auto& right_val = right->val();
-
-    UserOperation user_op = in_user_op;
 
     // left goes into ALT, right goes into PRI, though we can swap them for
     // commutative operations.
@@ -770,7 +799,6 @@ CodeGenerator::EmitBinaryInner(int oper_tok, const UserOperation& in_user_op, Ex
         if (right_val.ident == iCONSTEXPR) {
             if (commutative(oper_tok)) {
                 __ const_alt(right_val.constval());
-                user_op.swapparams ^= true;
             } else {
                 if (must_save_lhs)
                     __ emit(OP_PUSH_PRI);
@@ -787,74 +815,128 @@ CodeGenerator::EmitBinaryInner(int oper_tok, const UserOperation& in_user_op, Ex
         }
     }
 
-    if (oper_tok) {
-        if (user_op.sym) {
-            EmitUserOp(user_op, nullptr);
-            return;
+    Type* effective = left->val().type();
+    if (effective->isReference())
+        effective = effective->inner();
+
+    BuiltinType type = BuiltinType::Int;
+    if (effective->isInt64())
+        type = BuiltinType::Int64;
+    else if (effective->isFloat())
+        type = BuiltinType::Float;
+
+    if (oper_tok)
+        EmitBinaryOp(expr, type, oper_tok);
+}
+
+OPCODE GetFloatBinaryOp(int oper_tok) {
+    switch (oper_tok) {
+        case '*': return OP_MUL_F32;
+        case '/': return OP_DIV_ALT_F32;
+        case '%': return OP_MOD_ALT_F32;
+        case '+': return OP_ADD_F32;
+        case '-': return OP_SUB_ALT_F32;
+        case tlEQ: return OP_EQ_F32;
+        case tlNE: return OP_NEQ_F32;
+        case '>': return OP_GRTR_F32;
+        case tlGE: return OP_GEQ_F32;
+        case '<': return OP_LESS_F32;
+        case tlLE: return OP_LEQ_F32;
+        default:
+            assert(false);
+            return OP_NONE;
+    }
+}
+
+OPCODE GetInt32BinaryOp(int oper_tok) {
+    switch (oper_tok) {
+        case '*': return OP_SMUL;
+        case '/': return OP_SDIV_ALT_I32;
+        case '%': return OP_SMOD_ALT_I32;
+        case '+': return OP_ADD;
+        case '-': return OP_SUB_ALT;
+        case tSHL: return OP_SHL;
+        case tSHR: return OP_SSHR;
+        case tSHRU: return OP_SHR;
+        case '&': return OP_AND;
+        case '^': return OP_XOR;
+        case '|': return OP_OR;
+        case tlEQ: return OP_EQ;
+        case tlNE: return OP_NEQ;
+        case '>': return OP_SGRTR;
+        case tlGE: return OP_SGEQ;
+        case '<': return OP_SLESS;
+        case tlLE: return OP_SLEQ;
+        default:
+            assert(false);
+            return OP_NONE;
+    }
+}
+
+OPCODE GetInt64BinaryOp(int oper_tok) {
+    switch (oper_tok) {
+        case '*': return OP_SMUL_I64;
+        case '/': return OP_SDIV_ALT_I64;
+        case '%': return OP_SMOD_ALT_I64;
+        case '+': return OP_ADD_I64;
+        case '-': return OP_SUB_ALT_I64;
+        case tSHL: return OP_SHL_I64;
+        case tSHR: return OP_SSHR_I64;
+        case tSHRU: return OP_SHR_I64;
+        case '&': return OP_AND_I64;
+        case '^': return OP_XOR_I64;
+        case '|': return OP_OR_I64;
+        case tlEQ: return OP_EQ_I64;
+        case tlNE: return OP_NEQ_I64;
+        case '>': return OP_SGRTR_I64;
+        case tlGE: return OP_SGEQ_I64;
+        case '<': return OP_SLESS_I64;
+        case tlLE: return OP_SLEQ_I64;
+        default:
+            assert(false);
+            return OP_NONE;
+    }
+}
+
+static inline bool IsCompareOp(int oper_tok) {
+    switch (oper_tok) {
+        case tlEQ:
+        case tlNE:
+        case '>':
+        case tlGE:
+        case '<':
+        case tlLE:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void CodeGenerator::EmitBinaryOp(Expr* expr, BuiltinType type, int oper_tok) {
+    switch (oper_tok) {
+        case tlLE:
+        case tlGE:
+        case '<':
+        case '>':
+        case tSHL:
+        case tSHR:
+        case tSHRU:
+            __ emit(OP_XCHG);
+            break;
+    }
+
+    if (type == BuiltinType::Int64) {
+        OPCODE op64 = GetInt64BinaryOp(oper_tok);
+        if (IsCompareOp(oper_tok)) {
+            __ emit(op64);
+        } else {
+            auto pri_slot = AcquireTempSlot(BuiltinType::Int64);
+            __ emit(op64, pri_slot);
         }
-        switch (oper_tok) {
-            case '*':
-                __ emit(OP_SMUL);
-                break;
-            case '/':
-                __ emit(OP_SDIV_ALT);
-                break;
-            case '%':
-                __ emit(OP_SDIV_ALT);
-                __ emit(OP_MOVE_PRI);
-                break;
-            case '+':
-                __ emit(OP_ADD);
-                break;
-            case '-':
-                __ emit(OP_SUB_ALT);
-                break;
-            case tSHL:
-                __ emit(OP_XCHG);
-                __ emit(OP_SHL);
-                break;
-            case tSHR:
-                __ emit(OP_XCHG);
-                __ emit(OP_SSHR);
-                break;
-            case tSHRU:
-                __ emit(OP_XCHG);
-                __ emit(OP_SHR);
-                break;
-            case '&':
-                __ emit(OP_AND);
-                break;
-            case '^':
-                __ emit(OP_XOR);
-                break;
-            case '|':
-                __ emit(OP_OR);
-                break;
-            case tlLE:
-                __ emit(OP_XCHG);
-                __ emit(OP_SLEQ);
-                break;
-            case tlGE:
-                __ emit(OP_XCHG);
-                __ emit(OP_SGEQ);
-                break;
-            case '<':
-                __ emit(OP_XCHG);
-                __ emit(OP_SLESS);
-                break;
-            case '>':
-                __ emit(OP_XCHG);
-                __ emit(OP_SGRTR);
-                break;
-            case tlEQ:
-                __ emit(OP_EQ);
-                break;
-            case tlNE:
-                __ emit(OP_NEQ);
-                break;
-            default:
-                assert(false);
-        }
+    } else if (type == BuiltinType::Float) {
+        __ emit(GetFloatBinaryOp(oper_tok));
+    } else {
+        __ emit(GetInt32BinaryOp(oper_tok));
     }
 }
 
@@ -955,22 +1037,25 @@ CmpTokenToOp(int token)
             return OP_JSLESS;
         case '>':
             return OP_JSGRTR;
+        case tlEQ:
+            return OP_JEQ;
+        case tlNE:
+            return OP_JNEQ;
         default:
             assert(false);
             return OP_HALT;
     }
 }
 
-bool
-CodeGenerator::EmitChainedCompareExprTest(ChainedCompareExpr* root, bool jump_on_true,
-                                          Label* target)
-{
-    // No optimization for user operators or for compare chains.
-    if (root->ops().size() > 1 || root->ops()[0].userop.sym)
+bool CodeGenerator::EmitBinaryExprTest(BinaryExpr* root, bool jump_on_true, Label* target) {
+    if (!IsCompare(root->token()))
         return false;
 
-    Expr* left = root->first();
-    Expr* right = root->ops()[0].expr;
+    Expr* left = root->left();
+    if (left->val().type()->isInt64() || left->val().type()->isFloat())
+        return false;
+
+    Expr* right = root->right();
 
     EmitExpr(left);
     __ emit(OP_PUSH_PRI);
@@ -978,7 +1063,7 @@ CodeGenerator::EmitChainedCompareExprTest(ChainedCompareExpr* root, bool jump_on
     __ emit(OP_POP_ALT);
     __ emit(OP_XCHG);
 
-    int token = root->ops()[0].token;
+    int token = root->token();
     if (!jump_on_true) {
         switch (token) {
             case '<':
@@ -993,10 +1078,17 @@ CodeGenerator::EmitChainedCompareExprTest(ChainedCompareExpr* root, bool jump_on
             case tlLE:
                 token = '>';
                 break;
+            case tlEQ:
+                token = tlNE;
+                break;
+            case tlNE:
+                token = tlEQ;
+                break;
             default:
                 assert(false);
         }
     }
+
     __ emit(CmpTokenToOp(token), target);
     return true;
 }
@@ -1015,7 +1107,10 @@ CodeGenerator::EmitChainedCompareExpr(ChainedCompareExpr* root)
         // use XCHG to swap the LHS/RHS expressions.
         if (count)
             __ relop_prefix();
-        EmitBinaryInner(op.oper_tok, op.userop, left, op.expr);
+
+        int oper_tok = NormalizeBinaryToken(op.token);
+        EmitBinaryInner(root, oper_tok, left, op.expr);
+
         if (count)
             __ relop_suffix();
 
@@ -1043,23 +1138,17 @@ void
 CodeGenerator::EmitSymbolExpr(SymbolExpr* expr)
 {
     Decl* sym = expr->decl();
-    switch (sym->ident()) {
-        case iFUNCTN: {
-            auto fun = sym->as<FunctionDecl>();
-            assert(fun == fun->canonical());
+    if (auto fun = sym->as<FunctionDecl>()) {
+        assert(fun == fun->canonical());
 
-            assert(!fun->is_native());
-            assert(fun->is_live());
-            __ emit(OP_CONST_PRI, &fun->cg()->funcid);
-            break;
-        }
-        case iVARIABLE:
-            if (sym->type()->isArray() || sym->type()->isEnumStruct())
-                __ address(sym, sPRI);
-            break;
-        default:
-            // Note: constexprs are handled in Expr::Emit().
-            assert(false);
+        assert(!fun->is_native());
+        assert(fun->is_live());
+        __ emit(OP_CONST_PRI, &fun->cg()->funcid);
+    } else if (auto var = sym->as<VarDeclBase>()) {
+        if (sym->type()->isArray() || sym->type()->isEnumStruct())
+            __ address(var, sPRI);
+    } else {
+        assert(false);
     }
 }
 
@@ -1076,6 +1165,8 @@ CodeGenerator::EmitIndexExpr(IndexExpr* expr)
     if (!array_type->inner()->isArray()) {
         if (array_type->inner()->isChar())
             rank_size = 1;
+        else if (array_type->inner()->isInt64())
+            rank_size = sizeof(cell_t) * 2;
         else if (auto es = array_type->inner()->asEnumStruct())
             rank_size = es->array_size() * sizeof(cell_t);
     }
@@ -1138,14 +1229,40 @@ CodeGenerator::EmitFieldAccessExpr(FieldAccessExpr* expr)
 }
 
 void CodeGenerator::EmitCallExpr(CallExpr* call) {
-    // If returning an array, push a hidden parameter.
-    if (call->fun()->return_array() && !call->fun()->is_native()) {
-        cell retsize = call->fun()->return_type()->CellStorageSize();
-        assert(retsize);
+    if (call->fun()->is_builtin()) {
+        auto iter = builtins_.find(call->fun()->name());
+        assert(iter != builtins_.end());
 
-        __ emit(OP_HEAP, retsize * sizeof(cell));
-        __ emit(OP_PUSH_ALT);
-        TrackTempHeapAlloc(call, 1);
+        (this->*(iter->second))(call);
+        return;
+    }
+
+    // Calculate the hidden parameter if needed. If we need to heap allocate,
+    // we store the address in a local slot, so we can easily read it back out
+    // after the function returns. For simple stack allocations we just use a
+    // local variable.
+    std::optional<cell_t> hidden_arg;
+    std::optional<cell_t> hidden_slot;
+    cell_t nargs = (cell_t)call->args().size();
+    if (call->fun()->needs_hidden_arg()) {
+        auto return_type = call->fun()->return_type();
+        if (call->fun()->is_native() && return_type->isArray()) {
+            EmitNativeCallHiddenArg(call);
+
+            hidden_arg = {AcquireTempSlot(BuiltinType::Int)};
+            __ emit(OP_STOR_S_ALT, *hidden_arg);
+        } else if (return_type->isArray() || return_type->isEnumStruct()) {
+            cell retsize = call->fun()->return_type()->CellStorageSize();
+            assert(retsize);
+
+            hidden_arg = {AcquireTempSlot(BuiltinType::Int)};
+            __ emit(OP_HEAP, retsize * sizeof(cell));
+            __ emit(OP_STOR_S_ALT, *hidden_arg);
+            TrackTempHeapAlloc(call, 1);
+        } else {
+            hidden_slot = {AcquireTempSlot(BuiltinType::Int64)};
+        }
+        nargs++;
     }
 
     const auto& argv = call->args();
@@ -1172,6 +1289,7 @@ void CodeGenerator::EmitCallExpr(CallExpr* call) {
         }
 
         if (arg->type_info().is_varargs) {
+            bool needs_temp = false;
             if (val.type()->isArray()) {
                 if (lvalue)
                     __ address(val.sym, sPRI);
@@ -1182,19 +1300,26 @@ void CodeGenerator::EmitCallExpr(CallExpr* call) {
                  * "variable argument list" as a constant here */
                 if (val.sym->is_const() && !arg->type_info().is_const) {
                     EmitRvalue(val);
-                    __ setheap_pri();
-                    TrackTempHeapAlloc(expr, 1);
+                    needs_temp = true;
                 } else if (lvalue) {
                     __ address(val.sym, sPRI);
                 } else {
-                    __ setheap_pri();
-                    TrackTempHeapAlloc(expr, 1);
+                    needs_temp = true;
                 }
             } else if (val.ident == iCONSTEXPR || val.ident == iEXPRESSION) {
-                /* allocate a cell on the heap and store the
-                 * value (already in PRI) there */
-                __ setheap_pri();
-                TrackTempHeapAlloc(expr, 1);
+                needs_temp = true;
+            }
+            if (needs_temp) {
+                if (val.type()->isInt64()) {
+                    auto slot = AcquireTempSlot(BuiltinType::Int64);
+                    __ emit(OP_ADDR_ALT, slot);
+                    __ emit(OP_MOVE_I64);
+                    __ emit(OP_MOVE_PRI);
+                } else {
+                    auto slot = AcquireTempSlot(BuiltinType::Int);
+                    __ emit(OP_STOR_S_PRI, slot);
+                    __ emit(OP_ADDR_PRI, slot);
+                }
             }
         } else {
             if (arg->type_info().type->isReference()) {
@@ -1202,22 +1327,33 @@ void CodeGenerator::EmitCallExpr(CallExpr* call) {
                     assert(val.sym);
                     __ address(val.sym, sPRI);
                 }
+            } else {
+                // Emit a copy since int64 is passed by value. Unfortunately
+                // we can't tell if this is already a copy :(
+                // Maybe we could use iEXPRESSION as an indicator?
+                if (val.type()->isInt64()) {
+                    int32_t slot = AcquireTempSlot(BuiltinType::Int64);
+                    __ emit(OP_ADDR_ALT, slot);
+                    __ emit(OP_MOVE_I64);
+                    __ emit(OP_MOVE_PRI);
+                }
             }
         }
 
         __ emit(OP_PUSH_PRI);
     }
 
-    cell_t hidden_args = 0;
-    if (call->fun()->return_array() && call->fun()->is_native()) {
-        EmitNativeCallHiddenArg(call);
-        hidden_args++;
-    }
+    if (hidden_arg)
+        __ emit(OP_PUSH_S, *hidden_arg);
+    else if (hidden_slot)
+        __ emit(OP_PUSH_ADR, *hidden_slot);
 
-    EmitCall(call->fun(), (cell)argv.size() + hidden_args);
+    EmitCall(call->fun(), nargs);
 
-    if (call->fun()->return_array() && !call->fun()->is_native())
-        __ emit(OP_POP_PRI);
+    if (hidden_arg)
+        __ emit(OP_LOAD_S_PRI, *hidden_arg);
+    else if (hidden_slot)
+        __ emit(OP_ADDR_PRI, *hidden_slot);
 }
 
 void CodeGenerator::EmitNativeCallHiddenArg(CallExpr* call) {
@@ -1226,7 +1362,7 @@ void CodeGenerator::EmitNativeCallHiddenArg(CallExpr* call) {
     auto fun = call->fun();
 
     ArrayData array;
-    BuildCompoundInitializer(fun->return_type(), nullptr, &array);
+    BuildCompoundInitializer(QualType(fun->return_type()), nullptr, &array);
 
     cell retsize = call->fun()->return_type()->CellStorageSize();
     assert(retsize);
@@ -1256,8 +1392,6 @@ void CodeGenerator::EmitNativeCallHiddenArg(CallExpr* call) {
 
         __ emit(OP_INITARRAY_ALT, dat_addr, iv_size, 0, info->zeroes, 0);
     }
-
-    __ emit(OP_PUSH_ALT);
 }
 
 void
@@ -1278,44 +1412,28 @@ CodeGenerator::EmitDefaultArgExpr(DefaultArgExpr* expr)
     }
 }
 
-void
-CodeGenerator::EmitCallUserOpExpr(CallUserOpExpr* expr)
-{
-    EmitExpr(expr->expr());
-
-    const auto& userop = expr->userop();
-    if (userop.oper) {
-        auto val = expr->expr()->val();
-        EmitUserOp(userop, &val);
-    } else {
-        EmitUserOp(userop, nullptr);
-    }
-}
-
 void CodeGenerator::EmitNewArrayExpr(NewArrayExpr* expr) {
-    int numdim = 0;
-    auto& exprs = expr->exprs();
     const auto& type = expr->type();
-    for (size_t i = 0; i < exprs.size(); i++) {
-        EmitExpr(exprs[i]);
-
-        if (i == exprs.size() - 1 && type->isChar())
-            __ emit(OP_STRADJUST_PRI);
-
-        __ emit(OP_PUSH_PRI);
-        numdim++;
-    }
-
     auto innermost = type;
     while (innermost->isArray())
         innermost = innermost->to<ArrayType>()->inner();
 
-    if (auto es = innermost->asEnumStruct()) {
-        // The last dimension is implicit in the size of the enum struct. Note
-        // that when synthesizing a NewArrayExpr for old-style declarations,
-        // it is impossible to have an enum struct.
-        // :TODO: test this
-        __ emit(OP_PUSH_C, es->array_size());
+    int numdim = 0;
+    auto& exprs = expr->exprs();
+    for (size_t i = 0; i < exprs.size(); i++) {
+        EmitExpr(exprs[i]);
+
+        if (i == exprs.size() - 1) {
+            if (innermost->isChar()) {
+                __ emit(OP_STRADJUST_PRI);
+            } else if (auto es = innermost->asEnumStruct(); es && es->array_size() > 1) {
+                cell_t max_size = kMaxCells / es->array_size();
+                __ emit(OP_BOUNDS, max_size);
+                __ emit(OP_SMUL_C, es->array_size());
+            }
+        }
+
+        __ emit(OP_PUSH_PRI);
         numdim++;
     }
 
@@ -1334,9 +1452,8 @@ CodeGenerator::EmitIfStmt(IfStmt* stmt)
     EmitStmt(stmt->on_true());
     if (stmt->on_false()) {
         Label flab2;
-        if (!stmt->on_true()->IsTerminal()) {
+        if (stmt->on_true()->flow_type() == Flow_None)
             __ emit(OP_JUMP, &flab2);
-        }
         __ bind(&flab1);
         EmitStmt(stmt->on_false());
         if (flab2.used())
@@ -1348,12 +1465,12 @@ CodeGenerator::EmitIfStmt(IfStmt* stmt)
 
 void CodeGenerator::EmitReturnArrayStmt(ReturnStmt* stmt) {
     ArrayData array;
-    BuildCompoundInitializer(stmt->expr()->val().type(), nullptr, &array);
+    BuildCompoundInitializer(QualType(stmt->expr()->val().type()), nullptr, &array);
 
     auto info = fun_->return_array();
     if (array.iv.empty()) {
         // A much simpler copy can be emitted.
-        __ load_hidden_arg(fun_, true);
+        __ load_hidden_arg(fun_);
 
         cell size = fun_->return_type()->CellStorageSize();
         __ emit(OP_MOVS, size * sizeof(cell));
@@ -1386,7 +1503,7 @@ void CodeGenerator::EmitReturnArrayStmt(ReturnStmt* stmt) {
     // add.c <iv-size * 4>      ; address to data
     // memcopy <data-size>
     __ emit(OP_PUSH_PRI);
-    __ load_hidden_arg(fun_, false);
+    __ load_hidden_arg(fun_);
     __ emit(OP_INITARRAY_ALT, dat_addr, iv_size, 0, 0, 0);
     __ emit(OP_MOVE_PRI);
     __ emit(OP_ADD_C, iv_size * sizeof(cell));
@@ -1403,14 +1520,19 @@ CodeGenerator::EmitReturnStmt(ReturnStmt* stmt)
         EmitExpr(stmt->expr());
 
         const auto& v = stmt->expr()->val();
-        if (v.type()->isArray() || v.type()->isEnumStruct())
+        if (v.type()->isArray() || v.type()->isEnumStruct()) {
             EmitReturnArrayStmt(stmt);
+        } else if (v.type()->isInt64()) {
+            // Must copy to the hidden arg.
+            __ load_hidden_arg(fun_);
+            __ emit(OP_MOVE_I64);
+        }
     } else {
         /* this return statement contains no expression */
+        assert(!fun_->return_type()->isInt64());
         __ const_pri(0);
     }
 
-    genstackfree(-1); /* free everything on the stack */
     __ emit(OP_RETN);
 }
 
@@ -1418,7 +1540,7 @@ void
 CodeGenerator::EmitDeleteStmt(DeleteStmt* stmt)
 {
     Expr* expr = stmt->expr();
-    auto v = expr->val();
+    const auto& v = expr->val();
 
     // Only zap non-const lvalues.
     bool zap = expr->lvalue();
@@ -1450,7 +1572,7 @@ CodeGenerator::EmitDeleteStmt(DeleteStmt* stmt)
             }
         }
 
-        EmitRvalue(&v);
+        EmitRvalue(v);
     }
 
     // push.pri
@@ -1469,73 +1591,96 @@ CodeGenerator::EmitDeleteStmt(DeleteStmt* stmt)
         if (accessor)
             InvokeSetter(accessor, FALSE);
         else
-            EmitStore(&v);
+            EmitStore(v);
     }
 }
 
-void
-CodeGenerator::EmitRvalue(value* lval)
-{
-    switch (lval->ident) {
+void CodeGenerator::EmitRvalue(const value& lval) {
+    switch (lval.ident) {
         case iARRAYCELL:
-            if (!lval->type()->asEnumStruct())
+            if (!lval.type()->isComposite())
                 __ emit(OP_LOAD_I);
             break;
         case iARRAYCHAR:
             __ emit(OP_LODB_I, 1);
             break;
         case iACCESSOR:
-            InvokeGetter(lval->accessor());
-            lval->ident = iEXPRESSION;
+            InvokeGetter(lval.accessor());
             break;
         case iVARIABLE: {
-            if (lval->type()->isReference()) {
-                auto var = lval->sym->as<VarDeclBase>();
+            if (lval.type()->isReference()) {
+                auto var = lval.sym->as<VarDeclBase>();
                 assert(var->vclass() == sLOCAL || var->vclass() == sARGUMENT);
-                __ emit(OP_LREF_S_PRI, var->addr());
+                // int64 is internally passed by address.
+                if (lval.type()->inner()->isInt64())
+                    __ emit(OP_LOAD_S_PRI, var->addr());
+                else
+                    __ emit(OP_LREF_S_PRI, var->addr());
                 break;
             }
             [[fallthrough]];
         }
         default: {
-            auto var = lval->sym->as<VarDeclBase>();
-            if (var->vclass() == sLOCAL || var->vclass() == sARGUMENT)
-              __ emit(OP_LOAD_S_PRI, var->addr());
-            else if (!(var->type()->isArray() || var->type()->isEnumStruct()))
-              __ emit(OP_LOAD_PRI, var->addr());
+            auto var = lval.sym->as<VarDeclBase>();
+            if (var->type()->isInt64())
+                __ address(var, sPRI);
+            else if (var->vclass() == sLOCAL || var->vclass() == sARGUMENT)
+                __ emit(OP_LOAD_S_PRI, var->addr());
+            else if (!var->type()->isComposite())
+                __ emit(OP_LOAD_PRI, var->label());
             break;
         }
     }
 }
 
 void
-CodeGenerator::EmitStore(const value* lval)
+CodeGenerator::EmitStore(const value& lval, bool save_pri)
 {
-    switch (lval->ident) {
+    switch (lval.ident) {
         case iARRAYCELL:
-            __ emit(OP_STOR_I);
+            if (lval.type()->isInt64())
+                __ emit(OP_MOVE_I64);
+            else
+                __ emit(OP_STOR_I);
             break;
         case iARRAYCHAR:
             __ emit(OP_STRB_I, 1);
             break;
         case iACCESSOR:
-            InvokeSetter(lval->accessor(), true);
+            InvokeSetter(lval.accessor(), save_pri);
             break;
         case iVARIABLE: {
-            if (lval->type()->isReference()) {
-                auto var = lval->sym->as<VarDeclBase>();
+            if (lval.type()->isReference()) {
+                auto var = lval.sym->as<VarDeclBase>();
                 assert(var->vclass() == sLOCAL || var->vclass() == sARGUMENT);
-                __ emit(OP_SREF_S_PRI, var->addr());
+
+                if (lval.type()->inner()->isInt64()) {
+                    __ emit(OP_LOAD_S_ALT, var->addr());
+                    __ emit(OP_MOVE_I64);
+                } else {
+                    __ emit(OP_SREF_S_PRI, var->addr());
+                }
                 break;
             }
             [[fallthrough]];
         }
         default: {
-            auto var = lval->sym->as<VarDeclBase>();
-            if (var->vclass() == sLOCAL || var->vclass() == sARGUMENT)
-                __ emit(OP_STOR_S_PRI, var->addr());
-            else
-                __ emit(OP_STOR_PRI, var->addr());
+            auto var = lval.sym->as<VarDeclBase>();
+            if (var->vclass() == sLOCAL || var->vclass() == sARGUMENT) {
+                if (var->type()->isInt64()) {
+                    __ emit(OP_ADDR_ALT, var->addr());
+                    __ emit(OP_MOVE_I64);
+                } else {
+                    __ emit(OP_STOR_S_PRI, var->addr());
+                }
+            } else {
+                if (var->type()->isInt64()) {
+                    __ emit(OP_CONST_ALT, var->addr());
+                    __ emit(OP_MOVE_I64);
+                } else {
+                    __ emit(OP_STOR_PRI, var->addr());
+                }
+            }
             break;
         }
     }
@@ -1544,8 +1689,24 @@ CodeGenerator::EmitStore(const value* lval)
 void CodeGenerator::InvokeGetter(MethodmapPropertyDecl* prop) {
     assert(prop->getter());
 
+    // :TODO: figure out how to factor this code with EmitCallExpr.
+    std::optional<cell_t> hidden_slot;
+    if (prop->getter()->return_type()->isInt64())
+        hidden_slot = {AcquireTempSlot(BuiltinType::Int64)};
+
+    // |this|
     __ emit(OP_PUSH_PRI);
-    EmitCall(prop->getter(), 1);
+
+    cell_t nargs = 1;
+    if (hidden_slot) {
+        __ emit(OP_PUSH_ADR, *hidden_slot);
+        nargs++;
+    }
+
+    EmitCall(prop->getter(), nargs);
+
+    if (hidden_slot)
+        __ emit(OP_ADDR_PRI, *hidden_slot);
 }
 
 void CodeGenerator::InvokeSetter(MethodmapPropertyDecl* prop, bool save_pri) {
@@ -1567,7 +1728,6 @@ CodeGenerator::EmitDoWhileStmt(DoWhileStmt* stmt)
     assert(token == tDO || token == tWHILE);
 
     LoopContext loop_cx;
-    loop_cx.stack_scope_id = stack_scope_id();
     loop_cx.heap_scope_id = heap_scope_id();
     ke::SaveAndSet<LoopContext*> push_context(&loop_, &loop_cx);
 
@@ -1579,8 +1739,8 @@ CodeGenerator::EmitDoWhileStmt(DoWhileStmt* stmt)
 
         EmitStmt(body);
 
-        __ bind(&loop_cx.continue_to);
-        if (body->flow_type() != Flow_Break && body->flow_type() != Flow_Return) {
+        if (!IsTerminalFlow(body->flow_type()) || loop_cx.continue_to.used()) {
+            __ bind(&loop_cx.continue_to);
             if (cond->tree_has_heap_allocs()) {
                 // Need to create a temporary heap scope here.
                 Label on_true, join;
@@ -1618,7 +1778,7 @@ CodeGenerator::EmitDoWhileStmt(DoWhileStmt* stmt)
             EmitTest(cond, false, &loop_cx.break_to);
         }
         EmitStmt(body);
-        if (!body->IsTerminal())
+        if (body->flow_type() == Flow_None)
             __ emit(OP_JUMP, &loop_cx.continue_to);
     }
 
@@ -1630,8 +1790,6 @@ CodeGenerator::EmitLoopControl(int token)
 {
     assert(loop_);
     assert(token == tBREAK || token == tCONTINUE);
-
-    genstackfree(loop_->stack_scope_id);
 
     for (auto iter = heap_scopes_.rbegin(); iter != heap_scopes_.rend(); iter++) {
         if (iter->scope_id == loop_->heap_scope_id)
@@ -1646,32 +1804,25 @@ CodeGenerator::EmitLoopControl(int token)
         __ emit(OP_JUMP, &loop_->continue_to);
 }
 
-void
-CodeGenerator::EmitForStmt(ForStmt* stmt)
-{
+void CodeGenerator::EmitForStmt(ForStmt* stmt) {
     ke::Maybe<AutoEnterScope> debug_scope;
 
     auto scope = stmt->scope();
-    if (scope) {
-        pushstacklist();
+    if (scope)
         debug_scope.init(this, &local_syms_);
-    }
 
     auto init = stmt->init();
     if (init)
         EmitStmt(init);
 
     LoopContext loop_cx;
-    loop_cx.stack_scope_id = stack_scope_id();
     loop_cx.heap_scope_id = heap_scope_id();
     ke::SaveAndSet<LoopContext*> push_context(&loop_, &loop_cx);
 
     auto body = stmt->body();
     bool body_always_exits = false;
-    if (body->flow_type() == Flow_Return || body->flow_type() == Flow_Break) {
-        if (!stmt->has_continue())
-            body_always_exits = true;
-    }
+    if (IsTerminalFlow(body->flow_type()) && !stmt->has_continue())
+        body_always_exits = true;
 
     auto advance = stmt->advance();
     auto cond = stmt->cond();
@@ -1726,10 +1877,8 @@ CodeGenerator::EmitForStmt(ForStmt* stmt)
     }
     __ bind(&loop_cx.break_to);
 
-    if (scope) {
+    if (scope)
         debug_scope = {};
-        popstacklist(true);
-    }
 }
 
 void
@@ -1757,7 +1906,7 @@ CodeGenerator::EmitSwitchStmt(SwitchStmt* stmt)
         }
 
         EmitStmt(stmt);
-        if (!stmt->IsTerminal())
+        if (stmt->flow_type() == Flow_None)
             __ emit(OP_JUMP, &exit_label);
     }
 
@@ -1767,7 +1916,7 @@ CodeGenerator::EmitSwitchStmt(SwitchStmt* stmt)
         __ bind(&default_label);
 
         EmitStmt(stmt->default_case());
-        if (!stmt->default_case()->IsTerminal())
+        if (stmt->default_case()->flow_type() == Flow_None)
             __ emit(OP_JUMP, &exit_label);
 
         defcase = &default_label;
@@ -1799,26 +1948,44 @@ void CodeGenerator::EmitFunctionDecl(FunctionDecl* info) {
         return;
 
     __ bind(&info->cg()->label);
+
+    // Do this before we start crawling the body, since we need the method entry
+    // to exist before we start emitting arg/local info.
+    auto debug_method = AddFunctionEntry(info);
+
     __ emit(OP_PROC);
-    AddDebugLine(info->pos().line);
+    AddDebugLine(info->pos());
     EmitBreak();
     current_stack_ = 0;
+    locals_ = {};
+    free_temp_slots_ = {};
+    used_temp_slots_ = {};
 
     {
         AutoEnterScope arg_scope(this, &local_syms_);
 
-        for (const auto& fun_arg : info->args())
+        cell_t arg_index = 0;
+        if (info->needs_hidden_arg())
+            arg_index++;
+
+        for (const auto& fun_arg : info->args()) {
+            fun_arg->BindAddress(-(arg_index + 1));
             EnqueueDebugSymbol(fun_arg, asm_.position());
+            arg_index++;
+        }
 
         EmitStmt(info->body());
     }
 
     assert(!has_stack_or_heap_scopes());
 
-    // If return keyword is missing, we added it in the semantic pass.
+    if (info->body()->flow_type() != Flow_Return) {
+        __ emit(OP_ZERO_PRI);
+        __ emit(OP_RETN);
+    }
+
     __ emit(OP_ENDPROC);
 
-    stack_scopes_.clear();
     heap_scopes_.clear();
 
     info->cg()->pcode_end = asm_.pc();
@@ -1827,6 +1994,11 @@ void CodeGenerator::EmitFunctionDecl(FunctionDecl* info) {
     // In case there is no callgraph, we still need to track which function has
     // the biggest stack.
     max_script_memory_ = std::max(max_script_memory_, max_func_memory_);
+
+    if (debug_method)
+        rtti_->finish_method(info, *debug_method, std::move(locals_));
+    else
+        assert(locals_.count == 0);
 }
 
 void
@@ -1863,8 +2035,8 @@ void CodeGenerator::EmitCall(FunctionDecl* fun, cell nargs) {
 
     if (fun->is_native()) {
         if (!fun->cg()->label.bound()) {
-            __ bind_to(&fun->cg()->label, native_list_.size());
-            native_list_.emplace_back(fun);
+            cell index = AddNativeEntry(fun);
+            __ bind_to(&fun->cg()->label, index);
         }
         __ sysreq_n(&fun->cg()->label, nargs);
     } else {
@@ -1920,156 +2092,51 @@ CodeGenerator::EmitDefaultArray(Expr* expr, ArgDecl* arg)
     }
 }
 
-void
-CodeGenerator::EmitUserOp(const UserOperation& user_op, value* lval)
-{
-    // for increment and decrement operators, the symbol must first be loaded
-    // (and stored back afterwards)
-    if (user_op.oper == tINC || user_op.oper == tDEC) {
-        assert(!user_op.savepri);
-        assert(lval != NULL);
-        if (lval->ident == iARRAYCELL || lval->ident == iARRAYCHAR)
-            __ emit(OP_PUSH_PRI);
-        if (lval->ident != iACCESSOR)
-            EmitRvalue(lval); /* get the symbol's value in PRI */
-    }
+void CodeGenerator::EmitNumber64Expr(Number64Expr* expr) {
+    Int64CellUnion u(*expr->ToInt64());
 
-    assert(!user_op.savepri || !user_op.savealt); /* either one MAY be set, but not both */
-    if (user_op.savepri) {
-        // the chained comparison operators require that the ALT register is
-        // unmodified, so we save it here; actually, we save PRI because the normal
-        // instruction sequence (without user operator) swaps PRI and ALT
-        __ emit(OP_PUSH_PRI);
-    } else if (user_op.savealt) {
-        /* for the assignment operator, ALT may contain an address at which the
-         * result must be stored; this address must be preserved accross the
-         * call
-         */
-        assert(lval != NULL); /* this was checked earlier */
-        assert(lval->ident == iARRAYCELL || lval->ident == iARRAYCHAR); /* checked earlier */
-        __ emit(OP_PUSH_ALT);
-    }
+    auto slot = AcquireTempSlot(BuiltinType::Int64);
+    __ emit(OP_STOR_S_C_I64, slot, u.cells[0], u.cells[1]);
+    __ emit(OP_ADDR_PRI, slot);
+}
 
-    /* push parameters, call the function */
-    switch (user_op.paramspassed) {
-        case 1:
-            __ emit(OP_PUSH_PRI);
-            break;
-        case 2:
-            /* note that 1) a function expects that the parameters are pushed
-             * in reversed order, and 2) the left operand is in the secondary register
-             * and the right operand is in the primary register */
-            if (user_op.swapparams) {
-                __ emit(OP_PUSH_ALT);
-                __ emit(OP_PUSH_PRI);
-            } else {
-                __ emit(OP_PUSH_PRI);
-                __ emit(OP_PUSH_ALT);
-            }
-            break;
-        default:
-            assert(0);
-    }
-    assert(user_op.sym->ident() == iFUNCTN);
-    EmitCall(user_op.sym, user_op.paramspassed);
 
-    if (user_op.savepri || user_op.savealt)
-        __ emit(OP_POP_ALT); /* restore the saved PRI/ALT that into ALT */
-    if (user_op.oper == tINC || user_op.oper == tDEC) {
-        assert(lval != NULL);
-        if (lval->ident == iARRAYCELL || lval->ident == iARRAYCHAR)
-            __ emit(OP_POP_ALT); /* restore address (in ALT) */
-        if (lval->ident != iACCESSOR) {
-            EmitStore(lval); /* store PRI in the symbol */
-            __ emit(OP_MOVE_PRI);
-        }
+void CodeGenerator::EmitSimpleCastExpr(SimpleCastExpr* expr) {
+    EmitExpr(expr->from());
+
+    Type* from_type = expr->from()->val().type();
+
+    if (expr->to()->isInt64()) {
+        assert(from_type->isInt() || from_type->isAny());
+        auto slot = AcquireTempSlot(BuiltinType::Int64);
+        __ emit(OP_CVT_I64, slot);
+    } else if (expr->to()->isBool()) {
+        if (from_type->isInt64())
+            __ emit(OP_TEST_I64);
+        else
+            assert(false);
+    } else {
+        __ emit(OP_CVT_F32);
     }
 }
 
-void CodeGenerator::EmitInc(const value* lval)
-{
-    switch (lval->ident) {
-        case iARRAYCELL:
-            __ emit(OP_INC_I);
-            break;
-        case iARRAYCHAR:
-            __ emit(OP_PUSH_PRI);
-            __ emit(OP_PUSH_ALT);
-            __ emit(OP_MOVE_ALT);
-            __ emit(OP_LODB_I, 1);
-            __ emit(OP_INC_PRI);
-            __ emit(OP_STRB_I, 1);
-            __ emit(OP_POP_ALT);
-            __ emit(OP_POP_PRI);
-            break;
-        case iACCESSOR:
-            __ emit(OP_INC_PRI);
-            InvokeSetter(lval->accessor(), false);
-            break;
-        case iVARIABLE: {
-            if (lval->type()->isReference()) {
-                auto var = lval->sym->as<VarDeclBase>();
-                __ emit(OP_PUSH_PRI);
-                __ emit(OP_LREF_S_PRI, var->addr());
-                __ emit(OP_INC_PRI);
-                __ emit(OP_SREF_S_PRI, var->addr());
-                __ emit(OP_POP_PRI);
-                break;
-            }
-            [[fallthrough]];
-        }
-        default: {
-            auto var = lval->sym->as<VarDeclBase>();
-            if (var->vclass() == sLOCAL || var->vclass() == sARGUMENT)
-                __ emit(OP_INC_S, var->addr());
-            else
-                __ emit(OP_INC, var->addr());
-            break;
-        }
+void CodeGenerator::EmitCastExpr(CastExpr* expr) {
+    auto from = expr->expr();
+    EmitExpr(from);
+
+    if (expr->val().type()->isInt() && from->val().type()->isInt64()) {
+        __ emit(OP_TRUNCATE_I64);
+    } else if (expr->val().type()->isInt64() && from->val().type()->isInt()) {
+        auto slot = AcquireTempSlot(BuiltinType::Int64);
+        __ emit(OP_CVT_I64, slot);
     }
 }
 
-void CodeGenerator::EmitDec(const value* lval)
-{
-    switch (lval->ident) {
-        case iARRAYCELL:
-            __ emit(OP_DEC_I);
-            break;
-        case iARRAYCHAR:
-            __ emit(OP_PUSH_PRI);
-            __ emit(OP_PUSH_ALT);
-            __ emit(OP_MOVE_ALT);
-            __ emit(OP_LODB_I, 1);
-            __ emit(OP_DEC_PRI);
-            __ emit(OP_STRB_I, 1);
-            __ emit(OP_POP_ALT);
-            __ emit(OP_POP_PRI);
-            break;
-        case iACCESSOR:
-            __ emit(OP_DEC_PRI);
-            InvokeSetter(lval->accessor(), false);
-            break;
-        case iVARIABLE: {
-            if (lval->type()->isReference()) {
-                auto var = lval->sym->as<VarDeclBase>();
-                __ emit(OP_PUSH_PRI);
-                __ emit(OP_LREF_S_PRI, var->addr());
-                __ emit(OP_DEC_PRI);
-                __ emit(OP_SREF_S_PRI, var->addr());
-                __ emit(OP_POP_PRI);
-                break;
-            }
-            [[fallthrough]];
-        }
-        default: {
-            auto var = lval->sym->as<VarDeclBase>();
-            if (var->vclass() == sLOCAL || var->vclass() == sARGUMENT)
-                __ emit(OP_DEC_S, var->addr());
-            else
-                __ emit(OP_DEC, var->addr());
-            break;
-        }
-    }
+void CodeGenerator::EmitFloatBuiltin(CallExpr* expr) {
+    assert(expr->args().size() == 1);
+
+    EmitExpr(expr->args()[0]);
+    __ emit(OP_CVT_F32);
 }
 
 void
@@ -2126,7 +2193,7 @@ void CodeGenerator::TrackHeapAlloc(ParseNode* node, MemuseType type, int size) {
 
 void CodeGenerator::EnterHeapScope(FlowType flow_type) {
     EnterMemoryScope(heap_scopes_);
-    if (flow_type == Flow_None || flow_type == Flow_Mixed) {
+    if (flow_type != Flow_Return) {
         heap_scopes_.back().needs_restore = true;
         __ emit(OP_HEAP_SAVE);
     }
@@ -2143,55 +2210,6 @@ int CodeGenerator::heap_scope_id() {
     if (heap_scopes_.empty())
         return -1;
     return heap_scopes_.back().scope_id;
-}
-
-void
-CodeGenerator::pushstacklist()
-{
-    EnterMemoryScope(stack_scopes_);
-}
-
-int
-CodeGenerator::markstack(ParseNode* node, MemuseType type, int size)
-{
-    current_stack_ += size;
-    AllocInScope(node, stack_scopes_.back(), type, size);
-    return size;
-}
-
-void
-CodeGenerator::modstk_for_scope(const MemoryScope& scope)
-{
-    cell_t total = 0;
-    for (const auto& use : scope.usage) {
-        assert(use.type == MEMUSE_STATIC);
-        total += use.size;
-    }
-    if (total)
-        __ emit(OP_STACK, total * sizeof(cell));
-}
-
-void
-CodeGenerator::genstackfree(int stop_id)
-{
-    for (size_t i = stack_scopes_.size() - 1; i < stack_scopes_.size(); i--) {
-        const MemoryScope& scope = stack_scopes_[i];
-        if (scope.scope_id <= stop_id)
-            break;
-        modstk_for_scope(scope);
-    }
-}
-
-void
-CodeGenerator::popstacklist(bool codegen)
-{
-    if (codegen)
-        modstk_for_scope(stack_scopes_.back());
-    current_stack_ -= PopScope(stack_scopes_);
-}
-
-void CodeGenerator::LinkPublicFunction(FunctionDecl* decl, uint32_t id) {
-    __ bind_to(&decl->cg()->funcid, id);
 }
 
 int CodeGenerator::DynamicMemorySize() const {
@@ -2285,6 +2303,63 @@ bool CodeGenerator::ComputeStackUsage() {
         return true;
 
     return ComputeStackUsage(callgraph_.begin());
+}
+
+cell_t CodeGenerator::AcquireTempSlot(BuiltinType builtin_type) {
+    auto iter = free_temp_slots_.begin();
+    while (iter != free_temp_slots_.end()) {
+        if ((*iter).second == builtin_type) {
+            used_temp_slots_.splice(used_temp_slots_.end(), free_temp_slots_, iter);
+            return (*iter).first;
+        }
+        iter++;
+    }
+
+    auto type = cc_.types()->GetBuiltin(builtin_type);
+    uint32_t slot = rtti_->AddLocalSlot(&locals_, QualType(type));
+    used_temp_slots_.emplace_back(slot, builtin_type);
+    return slot;
+}
+
+std::optional<smx_rtti_debug_method> CodeGenerator::AddFunctionEntry(FunctionDecl* fun) {
+    if (fun->is_native())
+        return {};
+    if (!fun->body())
+        return {};
+    if (!fun->is_live())
+        return {};
+    if (fun->canonical() != fun)
+        return {};
+
+    uint32_t name_idx;
+    if (fun->is_public()) {
+        name_idx = names_->add(fun->name());
+    } else {
+        auto temp_name = ke::StringPrintf(".%d.%s", fun->cg()->label.offset(), fun->name()->chars());
+        name_idx = names_->add(*cc_.atoms(), temp_name);
+    }
+
+    assert(fun->cg()->label.offset() > 0);
+    assert(fun->impl());
+
+    sp_file_publics_t& pubfunc = publics_->add();
+    pubfunc.address = fun->cg()->label.offset();
+    pubfunc.name = name_idx;
+
+    auto id = (uint32_t(publics_->count() - 1) << 1) | 1;
+    if (!Label::ValueFits(id))
+        report(421);
+    __ bind_to(&fun->cg()->funcid, id);
+
+    return {rtti_->add_method(fun)};
+}
+
+uint32_t CodeGenerator::AddNativeEntry(FunctionDecl* decl) {
+    sp_file_natives_t& entry = natives_->add();
+    entry.name = names_->add(decl->name());
+
+    rtti_->add_native(decl);
+    return natives_->count() - 1;
 }
 
 } // namespace cc

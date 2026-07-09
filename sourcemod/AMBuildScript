@@ -71,7 +71,6 @@ class SMConfig(object):
     self.sdks = {}
     self.sdk_targets = []
     self.binaries = []
-    self.spvm = []
     self.extensions = []
     self.generated_headers = None
     self.mms_root = None
@@ -226,9 +225,7 @@ class SMConfig(object):
     elif cxx.family == 'msvc':
       self.configure_msvc(cxx)
 
-    # Optimizaiton
-    if builder.options.opt == '1':
-      cxx.defines += ['NDEBUG']
+    # Optimization flags are applied separately, earlier in configure_optimize so that the SDK static libs inherit them.
 
     # Debugging
     if builder.options.debug == '1':
@@ -258,6 +255,19 @@ class SMConfig(object):
         os.path.join(builder.buildPath, 'includes'),
         os.path.join(builder.sourcePath, 'versionlib'),
       ]
+
+  def configure_optimize(self, cxx):
+    if builder.options.opt != '1':
+      return
+    cxx.defines += ['NDEBUG']
+    if cxx.like('gcc'):
+      if self.enable_asan:
+        cxx.cflags += ['-O1']
+      else:
+        cxx.cflags += ['-O3']
+    elif cxx.family == 'msvc':
+      cxx.cflags += ['/Ox', '/Zo']
+      cxx.linkflags += ['/OPT:ICF', '/OPT:REF']
 
   def configure_gcc(self, cxx):
     cxx.defines += [
@@ -335,15 +345,14 @@ class SMConfig(object):
             '-Wno-tautological-overlap-compare',
         ]
 
+    if cxx.version >= 'clang-21.0':
+        cxx.cflags += ['-Wno-uninitialized-const-pointer']
+
     if have_gcc:
       cxx.cflags += ['-mfpmath=sse']
       cxx.cflags += ['-Wno-maybe-uninitialized']
 
-    if builder.options.opt == '1':
-      if self.enable_asan:
-        cxx.cflags += ['-O1']
-      else:
-        cxx.cflags += ['-O3']
+    # Optimization flags are applied separately, earlier in configure_optimize so that the SDK static libs inherit them.
 
     # Don't omit the frame pointer.
     cxx.cflags += ['-fno-omit-frame-pointer']
@@ -387,9 +396,7 @@ class SMConfig(object):
       'odbccp32.lib',
     ]
 
-    if builder.options.opt == '1':
-      cxx.cflags += ['/Ox', '/Zo']
-      cxx.linkflags += ['/OPT:ICF', '/OPT:REF']
+    # Optimization flags are applied separately, earlier in configure_optimize so that the SDK static libs inherit them.
 
     if builder.options.debug == '1':
       cxx.cflags += ['/Od', '/RTC1']
@@ -610,6 +617,11 @@ if getattr(builder, 'target', None) is not None:
 
 SM = SMConfig()
 SM.detectProductVersion()
+# Apply optimization to the base compilers before detecting SDKs. The tier1 and
+# mathlib SDK static libraries are configured during detectSDKs() by cloning these
+# compilers, so optimization must be applied first for it to propagate to them.
+for cxx in SM.all_targets:
+  SM.configure_optimize(cxx)
 if not getattr(builder.options, 'scripting_only', False):
   SM.detectSDKs()
 SM.configure()
@@ -688,12 +700,6 @@ for spcomp in SP.spcomp:
 if SM.spcomp.target.arch == 'universal':
     SM.spcomp_bins = [SM.spcomp]
 
-if not getattr(builder.options, 'scripting_only', False):
-  for cxx in SM.all_targets:
-    SM.spvm += [
-      SP.libsourcepawn[cxx.target.arch]
-    ]
-
 if getattr(builder.options, 'scripting_only', False):
   BuildScripts = [
     'tools/buildbot/PackageHelpers',
@@ -728,7 +734,7 @@ else:
       'tools/buildbot/PackageScript',
     ]
 
-builder.Build(BuildScripts, { 'SM': SM })
+builder.Build(BuildScripts, { 'SM': SM, 'SP': SP })
 
 if builder.options.breakpad_dump:
   builder.Build('tools/buildbot/BreakpadSymbols', { 'SM': SM })

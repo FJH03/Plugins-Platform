@@ -29,12 +29,11 @@ LIB-Debug/
 
 # AMBuild build directories
 build/
+objdir/
 obj-*/
 *~
 *.rej
 *.orig
-*.smx
-!tests/binary/*.smx
 *.swp
 *.pyc
 

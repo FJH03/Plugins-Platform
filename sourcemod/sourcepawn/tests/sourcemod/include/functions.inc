@@ -358,15 +358,7 @@ native void Call_PushArray(const any[] value, int size);
  */
 native void Call_PushArrayEx(any[] value, int size, int cpflags);
 
-/**
- * Pushes the NULL_VECTOR onto the current call.
- * @see IsNullVector
- *
- * @note Cannot be used before a call has been started.
- *
- * @error               Called before a call has been started.
- */
-native void Call_PushNullVector();
+
 
 /**
  * Pushes a string onto the current call.
@@ -395,15 +387,7 @@ native void Call_PushString(const char[] value);
  */
 native void Call_PushStringEx(char[] value, int length, int szflags, int cpflags);
 
-/**
- * Pushes the NULL_STRING onto the current call.
- * @see IsNullString
- *
- * @note Cannot be used before a call has been started.
- *
- * @error               Called before a call has been started.
- */
-native void Call_PushNullString();
+
 
 /**
  * Completes a call to a function or forward's call list.
@@ -448,6 +432,16 @@ typeset NativeCall
 	 * @return               Value for the native call to return.
 	 */
 	function any (Handle plugin, int numParams);
+
+	/**
+	 * Defines a native function.
+	 *
+	 * It is not necessary to validate the parameter count
+	 *
+	 * @param plugin         Handle of the calling plugin.
+	 * @param numParams      Number of parameters passed to the native.
+	 */
+	function void (Handle plugin, int numParams);
 }
 
 /**

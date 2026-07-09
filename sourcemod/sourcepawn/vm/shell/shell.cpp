@@ -15,6 +15,7 @@
 #include <stdarg.h>
 #include <amtl/am-cxx.h>
 #include <amtl/experimental/am-argparser.h>
+#include "api.h"
 #include "environment.h"
 #include "stack-frames.h"
 
@@ -32,6 +33,12 @@ using namespace sp;
 using namespace SourcePawn;
 
 Environment* sEnv;
+
+#ifdef NDEBUG
+static constexpr bool kIsDebug = false;
+#else
+static constexpr bool kIsDebug = true;
+#endif
 
 static const char*
 BaseFilename(const char* path)
@@ -110,6 +117,34 @@ static cell_t PrintNum(IPluginContext* cx, const cell_t* params)
   return printf("%d\n", params[1]);
 }
 
+static cell_t PrintNum64(IPluginContext* cx, const cell_t* params)
+{
+  cell_t* addr;
+  if (int err = cx->LocalToPhysAddr(params[1], &addr); err != SP_ERROR_NONE)
+    return cx->ThrowNativeErrorEx(err, "Could not read argument");
+  return printf("%" PRIi64 "\n", *reinterpret_cast<int64_t*>(addr));
+}
+
+static cell_t AddInt64(IPluginContext* cx, const cell_t* params)
+{
+  cell_t* out;
+  cell_t* num1;
+  cell_t* num2;
+  if (int err = cx->LocalToPhysAddr(params[1], &out); err != SP_ERROR_NONE)
+    return cx->ThrowNativeErrorEx(err, "Could not read argument");
+  if (int err = cx->LocalToPhysAddr(params[2], &num1); err != SP_ERROR_NONE)
+    return cx->ThrowNativeErrorEx(err, "Could not read argument");
+  if (int err = cx->LocalToPhysAddr(params[3], &num2); err != SP_ERROR_NONE)
+    return cx->ThrowNativeErrorEx(err, "Could not read argument");
+  *reinterpret_cast<int64_t*>(out) = *reinterpret_cast<int64_t*>(num1) + *reinterpret_cast<int64_t*>(num2);
+  return 0;
+}
+
+static cell_t DoNothingVarargs(IPluginContext* cx, const cell_t* params)
+{
+  return 0;
+}
+
 static cell_t PrintNums(IPluginContext* cx, const cell_t* params)
 {
   for (size_t i = 1; i <= size_t(params[0]); i++) {
@@ -118,6 +153,21 @@ static cell_t PrintNums(IPluginContext* cx, const cell_t* params)
     if ((err = cx->LocalToPhysAddr(params[i], &addr)) != SP_ERROR_NONE)
       return cx->ThrowNativeErrorEx(err, "Could not read argument");
     fprintf(stdout, "%d", *addr);
+    if (i != size_t(params[0]))
+      fprintf(stdout, ", ");
+  }
+  fprintf(stdout, "\n");
+  return 1;
+}
+
+static cell_t PrintNums64(IPluginContext* cx, const cell_t* params)
+{
+  for (size_t i = 1; i <= size_t(params[0]); i++) {
+    int err;
+    cell_t* addr;
+    if ((err = cx->LocalToPhysAddr(params[i], &addr)) != SP_ERROR_NONE)
+      return cx->ThrowNativeErrorEx(err, "Could not read argument");
+    fprintf(stdout, "%" PRIi64, *reinterpret_cast<int64_t*>(addr));
     if (i != size_t(params[0]))
       fprintf(stdout, ", ");
   }
@@ -165,7 +215,7 @@ static cell_t DoNothing(IPluginContext* cx, const cell_t* params)
   return 1;
 }
 
-static void BindNative(IPluginRuntime* rt, const char* name, SPVM_NATIVE_FUNC fn)
+static void BindNative(sp::BaseRuntime* rt, const char* name, SPVM_NATIVE_FUNC fn)
 {
   int err;
   uint32_t index;
@@ -175,7 +225,7 @@ static void BindNative(IPluginRuntime* rt, const char* name, SPVM_NATIVE_FUNC fn
   rt->UpdateNativeBinding(index, fn, 0, nullptr);
 }
 
-static void BindNative(IPluginRuntime* rt, const char* name, INativeCallback* callback)
+static void BindNative(sp::BaseRuntime* rt, const char* name, INativeCallback* callback)
 {
   int err;
   uint32_t index;
@@ -207,14 +257,47 @@ static cell_t CallWithString(IPluginContext* cx, const cell_t* params) {
   int sz_flags = params[4];
   int cp_flags = params[5];
 
-  fn->PushStringEx(buf, length, sz_flags, cp_flags);
-  fn->PushCell(length);
+  int translated_flags = cp_flags;
+  if (sz_flags & (1 << 0))
+    translated_flags |= SM_PARAM_STRING_UTF8;
+  if (sz_flags & (1 << 1))
+    translated_flags |= SM_PARAM_STRING_COPY;
+  if (sz_flags & (1 << 2))
+    translated_flags |= SM_PARAM_STRING_BINARY;
+
+  CallArgs args;
+  args.PushString(buf, length, translated_flags);
+  args.PushCell(length);
 
   cell_t rval;
-  if (!fn->Invoke(&rval))
+  if (!fn->Invoke(args, &rval))
     return 0;
   return rval;
 }
+
+static cell_t CallWithArray(IPluginContext* cx, const cell_t* params) {
+  auto fn = cx->GetFunctionById(params[1]);
+  if (!fn)
+    return cx->ThrowNativeError("Could not find function");
+
+  ARRAY_PTR array;
+  int err;
+  if ((err = cx->LocalToArrayPtr(params[2], &array)) != SP_ERROR_NONE)
+    return cx->ThrowNativeErrorEx(err, "Could not read array");
+
+  cell_t* flat_array = reinterpret_cast<cell_t*>(cx->GetArrayData(array));
+  int length = params[3];
+
+  CallArgs args;
+  args.PushArray(flat_array, length);
+  args.PushCell(length);
+
+  cell_t rval;
+  if (!fn->Invoke(args, &rval))
+    return 0;
+  return rval;
+}
+
 
 static cell_t DoExecute(IPluginContext* cx, const cell_t* params)
 {
@@ -264,19 +347,30 @@ static cell_t AssertEq(IPluginContext* cx, const cell_t* params)
 
 static cell_t Access2DArray(IPluginContext* cx, const cell_t* params)
 {
-  cell_t* phys_in;
+  ARRAY_PTR array;
   cell_t* phys_out;
+  uint32_t size;
 
   if (!cx->GetRuntime()->UsesDirectArrays())
     return 0;
 
   int err;
-  if ((err = cx->LocalToPhysAddr(params[1], &phys_in)) != SP_ERROR_NONE)
+  if ((err = cx->LocalToArrayPtr(params[1], &array)) != SP_ERROR_NONE)
     return cx->ThrowNativeErrorEx(err, "Could not read argument");
+
+  cell_t* phys_in = reinterpret_cast<cell_t*>(cx->GetArrayData(array, &size));
+  if (size != 0 && (uint32_t)params[2] >= size)
+    return cx->ThrowNativeErrorEx(SP_ERROR_ARRAY_BOUNDS, "Index out of bounds (level 0)");
+
+  if ((err = cx->LocalToArrayPtr(phys_in[params[2]], &array)) != SP_ERROR_NONE)
+    return cx->ThrowNativeErrorEx(err, "Could not read array level 0");
+
+  phys_in = reinterpret_cast<cell_t*>(cx->GetArrayData(array, &size));
+  if (size != 0 && (uint32_t)params[3] >= size)
+    return cx->ThrowNativeErrorEx(SP_ERROR_ARRAY_BOUNDS, "Index out of bounds (level 1)");
+
   if ((err = cx->LocalToPhysAddr(params[4], &phys_out)) != SP_ERROR_NONE)
     return cx->ThrowNativeErrorEx(err, "Could not read argument");
-  if ((err = cx->LocalToPhysAddr(phys_in[params[2]], &phys_in)) != SP_ERROR_NONE)
-    return cx->ThrowNativeErrorEx(err, "Could not read array level 0");
 
   *phys_out = phys_in[params[3]];
   return 1;
@@ -284,11 +378,12 @@ static cell_t Access2DArray(IPluginContext* cx, const cell_t* params)
 
 static cell_t Copy2dArrayToCallback(IPluginContext* cx, const cell_t* params)
 {
-  cell_t* flat_array;
+  ARRAY_PTR array;
 
   int err;
-  if ((err = cx->LocalToPhysAddr(params[1], &flat_array)) != SP_ERROR_NONE)
+  if ((err = cx->LocalToArrayPtr(params[1], &array)) != SP_ERROR_NONE)
     return cx->ThrowNativeErrorEx(err, "Could not read argument 1");
+  cell_t* flat_array = reinterpret_cast<cell_t*>(cx->GetArrayData(array));
 
   IPluginFunction* fn = cx->GetFunctionById(params[4]);
   if (!fn)
@@ -301,10 +396,12 @@ static cell_t Copy2dArrayToCallback(IPluginContext* cx, const cell_t* params)
     return 0;
 
   cell_t ignore;
-  fn->PushCell(addr);
-  fn->PushCell(params[2]);
-  fn->PushCell(params[3]);
-  fn->Execute(&ignore);
+  CallArgs args;
+  args.PushCell(addr);
+  args.PushCell(params[2]);
+  args.PushCell(params[3]);
+  if (!fn->Invoke(args, &ignore))
+    return 0;
   return 0;
 }
 
@@ -384,47 +481,49 @@ static_assert(offsetof(LayoutVerifier, x) == 52);
 static int Execute(const char* file)
 {
   char error[255];
-  std::unique_ptr<IPluginRuntime> rtb(sEnv->APIv2()->LoadBinaryFromFile(file, error, sizeof(error)));
-  if (!rtb) {
+  std::unique_ptr<PluginRuntime> rt(sEnv->LoadBinaryFromFile(file, error, sizeof(error)));
+  if (!rt) {
     fprintf(stderr, "Could not load plugin %s: %s\n", file, error);
     return 1;
   }
 
-  PluginRuntime* rt = PluginRuntime::FromAPI(rtb.get());
-
   ke::RefPtr<DynamicNative> dynamic_native(new DynamicNative());
 
   rt->InstallBuiltinNatives();
-  BindNative(rt, "print", Print);
-  BindNative(rt, "printnum", PrintNum);
-  BindNative(rt, "writenum", WriteNum);
-  BindNative(rt, "printnums", PrintNums);
-  BindNative(rt, "printfloat", PrintFloat);
-  BindNative(rt, "writefloat", WriteFloat);
-  BindNative(rt, "donothing", DoNothing);
-  BindNative(rt, "execute", DoExecute);
-  BindNative(rt, "invoke", DoInvoke);
-  BindNative(rt, "dump_stack_trace", DumpStackTrace);
-  BindNative(rt, "report_error", ReportError);
-  BindNative(rt, "Handle.~Handle", DoNothing);
-  BindNative(rt, "dynamic_native", dynamic_native.get());
-  BindNative(rt, "access_2d_array", Access2DArray);
-  BindNative(rt, "copy_2d_array_to_callback", Copy2dArrayToCallback);
-  BindNative(rt, "call_with_string", CallWithString);
-  BindNative(rt, "assert_eq", AssertEq);
-  BindNative(rt, "printf", Printf);
-  BindNative(rt, "print_test_struct", PrintTestStruct);
-  BindNative(rt, "add_test_structs", AddTestStructs);
+  BindNative(rt.get(), "print", Print);
+  BindNative(rt.get(), "printnum", PrintNum);
+  BindNative(rt.get(), "printnum64", PrintNum64);
+  BindNative(rt.get(), "writenum", WriteNum);
+  BindNative(rt.get(), "printnums", PrintNums);
+  BindNative(rt.get(), "printnums64", PrintNums64);
+  BindNative(rt.get(), "printfloat", PrintFloat);
+  BindNative(rt.get(), "writefloat", WriteFloat);
+  BindNative(rt.get(), "donothing", DoNothing);
+  BindNative(rt.get(), "execute", DoExecute);
+  BindNative(rt.get(), "invoke", DoInvoke);
+  BindNative(rt.get(), "dump_stack_trace", DumpStackTrace);
+  BindNative(rt.get(), "report_error", ReportError);
+  BindNative(rt.get(), "Handle.~Handle", DoNothing);
+  BindNative(rt.get(), "dynamic_native", dynamic_native.get());
+  BindNative(rt.get(), "access_2d_array", Access2DArray);
+  BindNative(rt.get(), "copy_2d_array_to_callback", Copy2dArrayToCallback);
+  BindNative(rt.get(), "call_with_string", CallWithString);
+  BindNative(rt.get(), "call_with_array", CallWithArray);
+
+  BindNative(rt.get(), "assert_eq", AssertEq);
+  BindNative(rt.get(), "printf", Printf);
+  BindNative(rt.get(), "print_test_struct", PrintTestStruct);
+  BindNative(rt.get(), "add_test_structs", AddTestStructs);
+  BindNative(rt.get(), "add_int64", AddInt64);
+  BindNative(rt.get(), "donothing_varargs", DoNothingVarargs);
 
   IPluginFunction* fun = rt->GetFunctionByName("main");
   if (!fun)
     return 0;
 
-  IPluginContext* cx = rt->GetDefaultContext();
-
   int result;
   {
-    ExceptionHandler eh(cx);
+    ExceptionHandler eh(rt.get());
     if (!fun->Invoke(&result)) {
       fprintf(stderr, "Error executing main: %s\n", eh.Message());
       return 1;
@@ -460,10 +559,6 @@ int main(int argc, char** argv)
     "p", "jitdump",
     Some(false),
     "Enable perf metadata recording for profiling.");
-  ToggleOption validate_debug_sections(parser,
-    "d", "validate-debug-sections",
-    Some(false),
-    "Validate debug sections before loading the plugin. Enables line debugging in the runtime, which might slow down execution.");
   StringOption filename(parser,
     "file",
     "SMX file to execute.");
@@ -471,6 +566,10 @@ int main(int argc, char** argv)
     "-v", "--version",
     Some(false),
     "Print version information and exit.");
+  ToggleOption enable_debugging(parser,
+    "-d", "--enable-debugging",
+    Some(kIsDebug),
+    "Enable debugging.");
 
   if (!parser.parse(argc, argv)) {
     parser.usage(stderr, argc, argv);
@@ -479,23 +578,21 @@ int main(int argc, char** argv)
 
   if (show_version.value()) {
     fprintf(stdout, "SourcePawn version: %s\n", SM_VERSION_STRING);
-    fprintf(stdout, "API version: %x/%x\n", SOURCEPAWN_API_VERSION, SOURCEPAWN_ENGINE2_API_VERSION);
-#if defined(SP_HAS_JIT)
-    fprintf(stdout, "Just-in-time (JIT) compiler available.\n");
-#endif
+    if (sEnv->IsJitAvailable())
+      fprintf(stdout, "Just-in-time (JIT) compiler available.\n");
     return 0;
   }
 
   if ((sEnv = Environment::New()) == nullptr) {
-    fprintf(stderr, "Could not initialize ISourcePawnEngine2\n");
+    fprintf(stderr, "Could not initialize ISourcePawnEnvironment\n");
     return 1;
   }
 
   if (getenv("DISABLE_JIT") || disable_jit.value())
     sEnv->SetJitEnabled(false);
 
-  if (getenv("VALIDATE_DEBUG_SECTIONS") || validate_debug_sections.value())
-    sEnv->EnableDebugBreak();
+  if (enable_debugging.value())
+      sEnv->EnableDebugBreak();
 
   if (getenv("SPEW_INTERP_OPS"))
     sEnv->set_spew_interp_ops(true);

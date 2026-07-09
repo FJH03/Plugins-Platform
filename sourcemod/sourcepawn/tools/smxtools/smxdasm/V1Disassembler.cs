@@ -161,6 +161,7 @@ namespace smxdasm
             Prep(V1Opcode.STOR_PRI, V1Param.Address);
             Prep(V1Opcode.STOR_S_ALT, V1Param.Stack);
             Prep(V1Opcode.STOR_S_PRI, V1Param.Stack);
+            Prep(V1Opcode.STOR_S_C, V1Param.Stack, V1Param.Constant);
             Prep(V1Opcode.STRADJUST_PRI);
             Prep(V1Opcode.STRB_I, V1Param.Constant);
             Prep(V1Opcode.SUB);
@@ -178,6 +179,7 @@ namespace smxdasm
             Prep(V1Opcode.ZERO_ALT);
             Prep(V1Opcode.ZERO_PRI);
             Prep(V1Opcode.ZERO_S, V1Param.Stack);
+            Prep(V1Opcode.ZERO_S_I64, V1Param.Stack);
             Prep(V1Opcode.REBASE, V1Param.Address, V1Param.Constant, V1Param.Constant);
             Prep(V1Opcode.INITARRAY_PRI, V1Param.Address, V1Param.Constant, V1Param.Constant,
                  V1Param.Constant, V1Param.Constant);
@@ -185,6 +187,46 @@ namespace smxdasm
                  V1Param.Constant, V1Param.Constant);
             Prep(V1Opcode.HEAP_SAVE);
             Prep(V1Opcode.HEAP_RESTORE);
+            Prep(V1Opcode.PUSH_I_I64);
+            Prep(V1Opcode.MOVE_I64);
+            Prep(V1Opcode.CVT_I64, V1Param.Stack);
+            Prep(V1Opcode.TRUNCATE_I64);
+            Prep(V1Opcode.TEST_I64);
+            Prep(V1Opcode.INVERT_I64, V1Param.Stack);
+            Prep(V1Opcode.NEG_I64, V1Param.Stack);
+            Prep(V1Opcode.SMUL_I64, V1Param.Stack);
+            Prep(V1Opcode.SDIV_ALT_I64, V1Param.Stack);
+            Prep(V1Opcode.ADD_I64, V1Param.Stack);
+            Prep(V1Opcode.SUB_ALT_I64, V1Param.Stack);
+            Prep(V1Opcode.SHL_I64, V1Param.Stack);
+            Prep(V1Opcode.SSHR_I64, V1Param.Stack);
+            Prep(V1Opcode.SHR_I64, V1Param.Stack);
+            Prep(V1Opcode.EQ_I64);
+            Prep(V1Opcode.NEQ_I64);
+            Prep(V1Opcode.OR_I64, V1Param.Stack);
+            Prep(V1Opcode.AND_I64, V1Param.Stack);
+            Prep(V1Opcode.XOR_I64, V1Param.Stack);
+            Prep(V1Opcode.STOR_S_C_I64, V1Param.Stack, V1Param.Constant, V1Param.Constant);
+            Prep(V1Opcode.STOR_S_PRI_I64, V1Param.Stack);
+            Prep(V1Opcode.SLESS_I64);
+            Prep(V1Opcode.SLEQ_I64);
+            Prep(V1Opcode.SGRTR_I64);
+            Prep(V1Opcode.SGEQ_I64);
+            Prep(V1Opcode.SMOD_ALT_I64, V1Param.Stack);
+            Prep(V1Opcode.TEST_F32);
+            Prep(V1Opcode.NEG_F32);
+            Prep(V1Opcode.MUL_F32);
+            Prep(V1Opcode.DIV_ALT_F32);
+            Prep(V1Opcode.ADD_F32);
+            Prep(V1Opcode.SUB_ALT_F32);
+            Prep(V1Opcode.EQ_F32);
+            Prep(V1Opcode.NEQ_F32);
+            Prep(V1Opcode.LESS_F32);
+            Prep(V1Opcode.LEQ_F32);
+            Prep(V1Opcode.GRTR_F32);
+            Prep(V1Opcode.GEQ_F32);
+            Prep(V1Opcode.CVT_F32);
+            Prep(V1Opcode.MOD_ALT_F32);
         }
 
         private SmxFile file_;

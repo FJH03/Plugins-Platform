@@ -409,7 +409,7 @@ class ArrayValidator final
     VarDeclBase* decl_;
     token_pos_t pos_;
     Expr* init_;
-    Type* type_;
+    QualType type_;
     ArrayType* at_;
     unsigned total_cells_ = 0;
     EnumStructDecl* es_;
@@ -529,6 +529,8 @@ cell CalcArraySize(Type* type) {
                 length = char_array_cells(length);
             else if (auto es = array->inner()->asEnumStruct())
                 length *= es->array_size();
+            else if (array->inner()->isInt64())
+                length *= 2;
         }
 
         last_size *= length;
@@ -664,20 +666,27 @@ bool ArrayValidator::ValidateRank(ArrayType* rank, Expr* init) {
         AutoErrorPos pos(expr->pos());
 
         if (expr->as<StringExpr>()) {
-            report(47);
+            report(expr, 47);
             continue;
         }
 
         const auto& v = expr->val();
-        if (v.ident != iCONSTEXPR) {
-            report(8);
+        if (v.ident != iCONSTEXPR && !expr->as<Number64Expr>()) {
+            report(expr, 8);
             continue;
         }
 
-        matchtag(rank->inner(), v.type(), MATCHTAG_COERCE);
+        // We manually run int64 checks until the feature has had time to settle.
+        if (rank->inner()->isInt64()) {
+            if (!v.type()->isInt() && !v.type()->isInt64())
+                report(expr, 450) << v.type() << rank->inner();
+        } else {
+            matchtag(rank->inner(), v.type(), MATCHTAG_COERCE);
+        }
 
         prev2 = prev1;
-        prev1 = ke::Some(v.constval());
+        if (v.ident == iCONSTEXPR)
+            prev1 = ke::Some(v.constval());
     }
 
     cell ncells = rank_size ? rank_size : array->exprs().size();
@@ -822,7 +831,7 @@ bool Semantics::CheckArrayDeclaration(VarDeclBase* decl) {
 class CompoundEmitter final
 {
   public:
-    CompoundEmitter(Type* type, Expr* init)
+    CompoundEmitter(QualType type, Expr* init)
       : type_(type),
         init_(init),
         pending_zeroes_(0)
@@ -852,11 +861,11 @@ class CompoundEmitter final
     size_t AddString(StringExpr* expr);
     void AddInlineArray(LayoutFieldDecl* field, ArrayExpr* expr);
     void AddInlineEnumStruct(EnumStructDecl* es, ArrayExpr* expr);
-    void EmitPadding(size_t rank_size, Type* type, size_t emitted, bool ellipses,
+    void EmitPadding(size_t rank_size, QualType type, size_t emitted, bool ellipses,
                      const ke::Maybe<cell> prev1, const ke::Maybe<cell> prev2);
 
   private:
-    Type* type_;
+    QualType type_;
     Expr* init_;
     tr::vector<cell> iv_;
     tr::vector<cell> data_;
@@ -923,9 +932,19 @@ cell CompoundEmitter::Emit(ArrayType* rank, Expr* init) {
                 // would flow through the check at the start of this function.
                 auto es = rank->inner()->asEnumStruct();
                 AddInlineEnumStruct(es, expr);
+            } else if (Number64Expr* n64 = item->as<Number64Expr>()) {
+                Int64CellUnion data(*n64->ToInt64());
+                add_data(data.cells[0]);
+                add_data(data.cells[1]);
             } else {
                 assert(item->val().ident == iCONSTEXPR);
-                add_data(item->val().constval());
+                if (rank->inner()->isInt64()) {
+                    Int64CellUnion data(item->val().constval());
+                    add_data(data.cells[0]);
+                    add_data(data.cells[1]);
+                } else {
+                    add_data(item->val().constval());
+                }
                 prev2 = prev1;
                 prev1 = ke::Some(item->val().constval());
             }
@@ -948,7 +967,7 @@ cell CompoundEmitter::Emit(ArrayType* rank, Expr* init) {
     // This only works because enum structs are flattened and don't support
     // internal IVs. No plans to change this as it would greatly increase
     // complexity unless we radically changed arrays.
-    EmitPadding(rank->size(), rank->inner(), emitted, ellipses, prev1, prev2);
+    EmitPadding(rank->size(), QualType(rank->inner()), emitted, ellipses, prev1, prev2);
 
     return (start * sizeof(cell)) | kDataFlag;
 }
@@ -968,7 +987,7 @@ void CompoundEmitter::AddInlineEnumStruct(EnumStructDecl* es, ArrayExpr* array) 
             assert(field);
 
             auto rank_type = field->type()->to<ArrayType>();
-            EmitPadding(rank_type->size(), rank_type->inner(), emitted, false, {}, {});
+            EmitPadding(rank_type->size(), QualType(rank_type->inner()), emitted, false, {}, {});
         } else if (ArrayExpr* expr = item->as<ArrayExpr>()) {
             // Subarrays can only appear in an enum struct. Normal 2D cases
             // would flow through the check at the start of this function.
@@ -1006,7 +1025,7 @@ void CompoundEmitter::AddInlineArray(LayoutFieldDecl* field, ArrayExpr* array) {
 }
 
 void
-CompoundEmitter::EmitPadding(size_t rank_size, Type* type, size_t emitted, bool ellipses,
+CompoundEmitter::EmitPadding(size_t rank_size, QualType type, size_t emitted, bool ellipses,
                              const ke::Maybe<cell> prev1, const ke::Maybe<cell> prev2)
 {
     // Pad remainder to zeroes if the array was explicitly sized.
@@ -1060,7 +1079,7 @@ CompoundEmitter::add_data(cell value)
     data_.emplace_back(value);
 }
 
-void BuildCompoundInitializer(Type* type, Expr* init, ArrayData* array) {
+void BuildCompoundInitializer(QualType type, Expr* init, ArrayData* array) {
     CompoundEmitter emitter(type, init);
     emitter.Emit();
 

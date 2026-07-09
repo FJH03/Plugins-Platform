@@ -44,7 +44,7 @@
 #include <sp_vm_types.h>
 
 #include "pool-objects.h"
-#include "shared/string-pool.h"
+#include "utils/string-pool.h"
 #include "source-file.h"
 #include "types.h"
 
@@ -63,7 +63,7 @@ struct DefaultArrayData;
 class VarDecl;
 
 struct DefaultArg : public PoolObject {
-    Type* type = nullptr;
+    QualType type{nullptr};
     ke::Maybe<cell> val;
     DefaultArrayData* array = nullptr;
     VarDecl* sym = nullptr;
@@ -88,7 +88,6 @@ struct DefaultArg : public PoolObject {
 struct declinfo_t {
     sp::Atom* name;
     typeinfo_t type;
-    int opertok; // Operator token, if applicable.
 };
 
 /* codes for ffabort() */

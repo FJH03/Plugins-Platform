@@ -8,15 +8,19 @@ enum struct TestStruct {
 }
 
 native void printnum(int n);
+native void printnum64(int64 n);
 native void writenum(int n);
 native void printfloat(float n);
 native void writefloat(float n);
-native void printnums(any:...);
+native void printnums(any:...); // note: int only, no int64
+native void printnums64(...); // note: int64 only
 native void print(const char[] str);
 native void dump_stack_trace();
 native void report_error();
 native void unbound_native();
 native int donothing();
+native int64 add_int64(int64 a, int64 b);
+native void donothing_varargs(...);
 
 // dumb version of printf(), only supports %f, %d, %s.
 native void printf(const char[] fmt, any:...);
@@ -43,11 +47,20 @@ typedef StringCallback = function void (char[] buffer, int length);
 native int call_with_string(StringCallback fn, char[] buffer, int length, int sz_flags,
                             int cp_flags);
 
+typedef ArrayCallback = function void (const int[] array, int length);
+native int call_with_array(ArrayCallback fn, const int[] array, int length);
+
 typedef Array2dCallback = function void (const int[][] array, int length, int stride);
 
 // Create a 2D array from the given "flat" array, length and stride.
 native void copy_2d_array_to_callback(const int[] flat_array, int length, int stride,
                                       Array2dCallback callback);
+
+typedef NullVectorCallback = function void (const float[] vec);
+native void call_with_null_vector(NullVectorCallback fn);
+
+typedef NullStringCallback = function void (const char[] str);
+native void call_with_null_string(NullStringCallback fn);
 
 native void assert_eq(any a1, any a2);
 

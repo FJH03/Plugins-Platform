@@ -30,6 +30,7 @@
 #include <ISourceMod.h>
 #include <bridge/include/CoreProvider.h>
 #include "HandleSys.h"
+#include <sourcepawn/vm/environment.h>
 
 RootConsoleMenu g_RootMenu;
 
@@ -235,15 +236,13 @@ void RootConsoleMenu::OnRootConsoleCommand(const char *cmdname, const ICommandAr
 	{
 		ConsolePrint(" SourceMod Version Information:");
 		ConsolePrint("    SourceMod Version: %s", SOURCEMOD_VERSION);
-		if (g_pSourcePawn2->IsJitEnabled())
-			ConsolePrint("    SourcePawn Engine: %s (build %s)", g_pSourcePawn2->GetEngineName(), g_pSourcePawn2->GetVersionString());
+		if (g_pPawnEnv->IsJitEnabled())
+			ConsolePrint("    SourcePawn Engine: %s (build %s)", g_pPawnEnv->GetEngineName(), g_pPawnEnv->GetVersionString());
 		else
-			ConsolePrint("    SourcePawn Engine: %s (build %s NO JIT)", g_pSourcePawn2->GetEngineName(), g_pSourcePawn2->GetVersionString());
-		ConsolePrint("    SourcePawn API: v1 = %d, v2 = %d", g_pSourcePawn->GetEngineAPIVersion(), g_pSourcePawn2->GetAPIVersion());
+			ConsolePrint("    SourcePawn Engine: %s (build %s NO JIT)", g_pPawnEnv->GetEngineName(), g_pPawnEnv->GetVersionString());
 		ConsolePrint("    Compiled on: %s", SOURCEMOD_BUILD_TIME);
 #if defined(SM_GENERATED_BUILD)
-		ConsolePrint("    Built from: https://github.com/FJH03/Plugins-Platform/commit/%s", SOURCEMOD_SHA);
-		ConsolePrint("    Branch: %s", SOURCEMOD_BRANCH);
+		ConsolePrint("    Built from: https://github.com/alliedmodders/sourcemod/commit/%s", SOURCEMOD_SHA);
 		ConsolePrint("    Build ID: %s:%s", SOURCEMOD_LOCAL_REV, SOURCEMOD_SHA);
 #endif
 		ConsolePrint("    http://www.sourcemod.net/");

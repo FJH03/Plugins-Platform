@@ -1,7 +1,7 @@
 // vim: set sts=2 ts=8 sw=2 tw=99 et:
-// 
+//
 // Copyright (C) 2006-2015 AlliedModders LLC
-// 
+//
 // This file is part of SourcePawn. SourcePawn is free software: you can
 // redistribute it and/or modify it under the terms of the GNU General Public
 // License as published by the Free Software Foundation, either version 3 of
@@ -22,13 +22,10 @@ CodeStubs::CodeStubs(Environment* env)
 }
 
 bool
-CodeStubs::Initialize()
-{
+CodeStubs::Initialize() {
 #if defined(SP_HAS_JIT)
-  if (!InitializeFeatureDetection())
-    return false;
-  if (!CompileInvokeStub())
-    return false;
+    if (!CompileInvokeStub())
+        return false;
 #endif
-  return true;
+    return true;
 }

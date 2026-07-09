@@ -135,6 +135,8 @@ class FixedArray : private AllocPolicy
         return *this;
     }
     FixedArray& operator =(FixedArray&& other) {
+        destruct();
+        deallocate();
         size_ = other.size_;
         data_ = other.data_;
         other.size_ = 0;
@@ -158,7 +160,10 @@ class FixedArray : private AllocPolicy
   private:
     bool allocate(size_t size) {
         size_ = size;
-        data_ = (T*)this->am_malloc(sizeof(T) * size_);
+        if (size == 0)
+            data_ = nullptr;
+        else
+            data_ = (T*)this->am_malloc(sizeof(T) * size_);
         return !!data_;
     }
     void destruct() {

@@ -20,16 +20,24 @@
 //  3.  This notice may not be removed or altered from any source distribution.
 #pragma once
 
+#include <list>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-#include "stl/stl-unordered-map.h"
+#include <utils/bitset.h>
 #include "data-queue.h"
 #include "errors.h"
+#include "libsmx/data-pool.h"
+#include "libsmx/smx-builder.h"
+#include "libsmx/smx-encoding.h"
 #include "parse-node.h"
+#include "rtti-builder.h"
+#include "utils/byte-buffer.h"
+#include "utils/string-pool.h"
 #include "smx-assembly-buffer.h"
+#include "stl/stl-unordered-map.h"
 
 namespace sp {
 namespace cc {
@@ -44,19 +52,15 @@ class CodeGenerator final
 
     bool Generate();
 
-    void LinkPublicFunction(FunctionDecl* decl, uint32_t id);
-
-    const tr::vector<tr::string>& debug_strings() const { return debug_strings_; }
-    const tr::vector<FunctionDecl*>& native_list() const { return native_list_; }
-
-    const uint8_t* code_ptr() const { return asm_.bytes(); }
+    SmxBuilder& smx() { return smx_; }
     uint32_t code_size() const { return (uint32_t)asm_.size(); }
-    const uint8_t* data_ptr() const { return data_.dat(); }
     uint32_t data_size() const { return data_.size(); }
 
     int DynamicMemorySize() const;
 
   private:
+    void FinishSmx();
+
     // Statements/decls.
     void EmitStmtList(StmtList* list);
     void EmitStmt(Stmt* stmt);
@@ -82,7 +86,7 @@ class CodeGenerator final
     void EmitUnary(UnaryExpr* expr);
     void EmitIncDec(IncDecExpr* expr);
     void EmitBinary(BinaryExpr* expr);
-    void EmitBinaryInner(int oper_tok, const UserOperation& in_user_op, Expr* left, Expr* right);
+    void EmitBinaryInner(Expr* expr, int oper_tok, Expr* left, Expr* right);
     void EmitLogicalExpr(LogicalExpr* expr);
     void EmitChainedCompareExpr(ChainedCompareExpr* expr);
     void EmitTernaryExpr(TernaryExpr* expr);
@@ -92,38 +96,36 @@ class CodeGenerator final
     void EmitCallExpr(CallExpr* expr);
     void EmitNativeCallHiddenArg(CallExpr* expr);
     void EmitDefaultArgExpr(DefaultArgExpr* expr);
-    void EmitCallUserOpExpr(CallUserOpExpr* expr);
     void EmitNewArrayExpr(NewArrayExpr* expr);
+    void EmitNumber64Expr(Number64Expr* expr);
+    void EmitSimpleCastExpr(SimpleCastExpr* expr);
+    void EmitCastExpr(CastExpr* expr);
 
     // Logical test helpers.
     bool EmitUnaryExprTest(UnaryExpr* expr, bool jump_on_true, sp::Label* target);
     void EmitLogicalExprTest(LogicalExpr* expr, bool jump_on_true, sp::Label* target);
-    bool EmitChainedCompareExprTest(ChainedCompareExpr* expr, bool jump_on_true,
-                                    sp::Label* target);
+    bool EmitBinaryExprTest(BinaryExpr* expr, bool jump_on_true, sp::Label* target);
 
     void EmitDefaultArray(Expr* expr, ArgDecl* arg);
-    void EmitUserOp(const UserOperation& user_op, value* lval);
     void EmitCall(FunctionDecl* fun, cell nargs);
-    void EmitInc(const value* lval);
-    void EmitDec(const value* lval);
     void InvokeGetter(MethodmapPropertyDecl* method);
     void InvokeSetter(MethodmapPropertyDecl* method, bool save);
-    void EmitRvalue(value* lval);
-    void EmitStore(const value* lval);
+    void EmitRvalue(const value& lval);
+    void EmitStore(const value& lval, bool save_pri = true);
     void EmitBreak();
+    void EmitBinaryOp(Expr* expr, BuiltinType type, int oper_tok);
 
-    void EmitRvalue(const value& lval) {
-        value tmp = lval;
-        EmitRvalue(&tmp);
-    }
+    // Builtins.
+    void EmitFloatBuiltin(CallExpr* expr);
 
     using DebugSymbol = std::pair<Decl*, uint32_t>;
-
     void AddDebugFile(const std::string& line);
-    void AddDebugLine(int linenr);
+    void AddDebugLine(const token_pos_t& pos);
     void AddDebugSymbol(Decl* sym, uint32_t pc);
     void AddDebugSymbols(tr::vector<DebugSymbol>* list);
     void EnqueueDebugSymbol(Decl* decl, uint32_t pc);
+    uint32_t AddNativeEntry(FunctionDecl* decl);
+    std::optional<smx_rtti_debug_method> AddFunctionEntry(FunctionDecl* decl);
 
     // Helper that automatically handles heap deallocations.
     void EmitExprForStmt(Expr* expr);
@@ -174,23 +176,11 @@ class CodeGenerator final
     void LeaveHeapScope();
     void TrackTempHeapAlloc(Expr* source, int size);
     void TrackHeapAlloc(ParseNode* node, MemuseType type, int size);
-
-    // Stack functions
-    void pushstacklist();
-    void popstacklist(bool codegen);
-    int markstack(ParseNode* node, MemuseType type, int size);
     void modheap_for_scope(const MemoryScope& scope);
-    void modstk_for_scope(const MemoryScope& scope);
 
-    // Generates code to free mem usage, but does not pop the list.  
-    //  This is used for code like dobreak()/docont()/doreturn().
-    // stop_id is the list at which to stop generating.
-    void genstackfree(int stop_id);
-
-    int stack_scope_id() { return stack_scopes_.back().scope_id; }
     int heap_scope_id();
     bool has_stack_or_heap_scopes() {
-        return !stack_scopes_.empty() || !heap_scopes_.empty();
+        return !heap_scopes_.empty();
     }
 
     void EnterMemoryScope(tr::vector<MemoryScope>& frame);
@@ -201,6 +191,10 @@ class CodeGenerator final
 
     bool ComputeStackUsage();
     bool ComputeStackUsage(CallGraph::iterator caller_iter);
+
+    void EnterTempSlotScope();
+    void LeaveTempSlotScope();
+    cell_t AcquireTempSlot(BuiltinType type);
 
   private:
     typedef tr::vector<tr::vector<DebugSymbol>> SymbolStack;
@@ -217,23 +211,39 @@ class CodeGenerator final
     friend class AutoEnterScope;
 
   private:
+    typedef SmxListSection<sp_file_natives_t> SmxNativeSection;
+    typedef SmxListSection<sp_file_pubvars_t> SmxPubvarSection;
+    typedef SmxListSection<sp_file_publics_t> SmxPublicSection;
+    typedef SmxBlobSection<sp_file_data_t> SmxDataSection;
+    typedef SmxBlobSection<sp_file_code_t> SmxCodeSection;
+
+  private:
     CompileContext& cc_;
     ParseTree* tree_;
     FunctionDecl* fun_ = nullptr;
     int max_script_memory_ = 0;
 
-    tr::vector<tr::string> debug_strings_;
-    tr::vector<FunctionDecl*> native_list_;
     SmxAssemblyBuffer asm_;
     DataQueue data_;
 
+    // SMX layout.
+    SmxBuilder smx_;
+    RefPtr<SmxNameTable> names_;
+    RefPtr<SmxDataSection> smx_data_;
+    RefPtr<SmxNativeSection> natives_;
+    RefPtr<SmxPubvarSection> pubvars_;
+    RefPtr<SmxCodeSection> code_;
+    RefPtr<SmxPublicSection> publics_;
+    std::unique_ptr<RttiBuilder> rtti_;
+
     ke::Maybe<uint32_t> last_break_op_;
-    tr::vector<MemoryScope> stack_scopes_;
     tr::vector<MemoryScope> heap_scopes_;
     SymbolStack local_syms_;
     tr::vector<DebugSymbol> global_syms_;
     tr::vector<std::pair<SymbolScope*, tr::vector<DebugSymbol>>> static_syms_;
     tr::unordered_set<SymbolScope*> static_scopes_;
+    std::list<std::pair<uint32_t, BuiltinType>> free_temp_slots_;
+    std::list<std::pair<uint32_t, BuiltinType>> used_temp_slots_;
 
     // Loop handling.
     struct LoopContext {
@@ -248,8 +258,11 @@ class CodeGenerator final
     int current_memory_ = 0;
     int max_func_memory_ = 0;
     CallGraph callgraph_;
+    LocalSlotSignature locals_;
 
     AutoCountErrors errors_;
+
+    std::unordered_map<sp::Atom*, void(CodeGenerator::*)(CallExpr*)> builtins_;
 };
 
 } // namespace cc

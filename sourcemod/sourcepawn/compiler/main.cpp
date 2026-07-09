@@ -43,6 +43,7 @@
 
 #include "array-helpers.h"
 #include "assembler.h"
+#include "ast-printer.h"
 #include "code-generator.h"
 #include "compile-options.h"
 #include "lexer.h"
@@ -195,7 +196,11 @@ int RunCompiler(int argc, char** argv, CompileContext& cc) {
             if (!sema.Analyze(tree) || !errors.ok())
                 goto cleanup;
 
-            tree->stmts()->ProcessUses(sc);
+            if (options->print_ast) {
+                AstPrinter printer(stdout);
+                printer.Print(tree);
+            }
+
             ok = true;
         }
     }

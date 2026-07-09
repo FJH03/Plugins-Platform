@@ -25,8 +25,8 @@
 #include <unordered_set>
 
 #include "array-data.h"
-#include "pool-allocator.h"
-#include "shared/string-pool.h"
+#include "utils/pool-allocator.h"
+#include "utils/string-pool.h"
 #include "source-file.h"
 #include "source-manager.h"
 #include "stl/stl-forward-list.h"
@@ -118,7 +118,7 @@ class CompileContext final
     bool& in_preprocessor() { return in_preprocessor_; }
     bool& detected_illegal_preproc_symbols() { return detected_illegal_preproc_symbols_; }
 
-    cc::PoolAllocator& allocator() { return allocator_; }
+    PoolAllocator& allocator() { return allocator_; }
 
     // No copy construction.
     CompileContext(const CompileContext&) = delete;
@@ -127,11 +127,10 @@ class CompileContext final
     void operator =(CompileContext&&) = delete;
 
     DefaultArrayData* NewDefaultArrayData();
-    tr::vector<tr::string>* NewDebugStringList();
     tr::unordered_map<Atom*, Decl*>* NewSymbolMap();
 
   private:
-    cc::PoolAllocator allocator_;
+    PoolAllocator allocator_;
     SymbolScope* globals_;
     std::string default_include_;
     tr::unordered_set<FunctionDecl*> functions_;
@@ -163,7 +162,6 @@ class CompileContext final
 
     // AST attachments.
     tr::forward_list<DefaultArrayData> default_array_data_objects_;
-    tr::forward_list<tr::vector<tr::string>> debug_strings_;
     tr::forward_list<tr::unordered_map<Atom*, Decl*>> symbol_maps_;
 
     size_t malloc_bytes_ = 0;

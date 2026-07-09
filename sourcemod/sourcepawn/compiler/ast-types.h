@@ -19,6 +19,8 @@
 //  3.  This notice may not be removed or altered from any source distribution.
 #pragma once
 
+#include <stdint.h>
+
 #define AST_STMT_TYPE_LIST(FOR_EACH) \
     FOR_EACH(StmtList) \
     FOR_EACH(BlockStmt) \
@@ -64,7 +66,6 @@
     FOR_EACH(SymbolExpr) \
     FOR_EACH(CallExpr) \
     FOR_EACH(NamedArgExpr) \
-    FOR_EACH(CallUserOpExpr) \
     FOR_EACH(DefaultArgExpr) \
     FOR_EACH(FieldAccessExpr) \
     FOR_EACH(IndexExpr) \
@@ -73,11 +74,14 @@
     FOR_EACH(ThisExpr) \
     FOR_EACH(NullExpr) \
     FOR_EACH(TaggedValueExpr) \
+    FOR_EACH(Number64Expr) \
     FOR_EACH(StringExpr) \
     FOR_EACH(NewArrayExpr) \
     FOR_EACH(ArrayExpr) \
     FOR_EACH(StructExpr) \
-    FOR_EACH(StructInitFieldExpr)
+    FOR_EACH(StructInitFieldExpr) \
+    FOR_EACH(SimpleCastExpr) \
+
 
 enum class ExprKind : uint8_t
 {

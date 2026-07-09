@@ -108,6 +108,8 @@ cell_t Type::CellStorageSize() {
         return CalcArraySize(at);
     if (auto es = asEnumStruct())
         return es->array_size();
+    if (isInt64())
+        return 2;
     return 1;
 }
 
@@ -159,6 +161,12 @@ void TypeManager::RegisterType(Type* type, bool unique_name) {
 Type* TypeManager::defineBuiltin(const char* name, BuiltinType type) {
     Type* ptr = add(name, TypeKind::Builtin);
     ptr->setBuiltinType(type);
+
+    uint32_t index = (uint32_t)type;
+    if (index >= builtin_types_.size())
+        builtin_types_.resize(index + 1);
+    builtin_types_[index] = ptr;
+
     return ptr;
 }
 
@@ -219,6 +227,8 @@ void TypeManager::init() {
 
     type_function_ = defineFunction(cc_.atom("Function"), nullptr);
     type_object_ = defineObject("object");
+
+    type_int64_ = defineBuiltin("int64", BuiltinType::Int64);
 }
 
 Type* TypeManager::defineFunction(Atom* name, funcenum_t* fe) {
@@ -289,8 +299,16 @@ Type* TypeManager::defineReference(Type* inner) {
     return type;
 }
 
-FunctionType* TypeManager::defineFunction(Type* return_type,
-                                          const std::vector<std::pair<QualType, sp::Atom*>>& args,
+Type* TypeManager::defineTypedef(Atom* name, Type* inner) {
+    assert(find(name) == nullptr);
+
+    Type* type = add(name, TypeKind::Typedef);
+    type->setTypedef(inner);
+    return type;
+}
+
+FunctionType* TypeManager::defineFunction(QualType return_type,
+                                          const std::vector<QualType>& args,
                                           bool variadic)
 {
     FunctionCachePolicy::Lookup lookup{return_type, &args, variadic};
@@ -330,20 +348,16 @@ bool TypeManager::FunctionCachePolicy::matches(const Lookup& lookup, FunctionTyp
     if (lookup.args->size() != fun->nargs())
         return false;
     for (unsigned int i = 0; i < fun->nargs(); i++) {
-        if (lookup.args->at(i).first != fun->arg_type(i))
-            return false;
-        if (lookup.args->at(i).second != fun->arg_name(i))
+        if (lookup.args->at(i) != fun->arg_type(i))
             return false;
     }
     return true;
 }
 
 uint32_t TypeManager::FunctionCachePolicy::hash(const Lookup& lookup) {
-    uint32_t h = ke::HashPointer(lookup.return_type);
-    for (size_t i = 0; i < lookup.args->size(); i++) {
-        h = ke::HashCombine(h, lookup.args->at(i).first.hash());
-        h = ke::HashCombine(h, ke::HashPointer(lookup.args->at(i).second));
-    }
+    uint32_t h = lookup.return_type.hash();
+    for (size_t i = 0; i < lookup.args->size(); i++)
+        h = ke::HashCombine(h, lookup.args->at(i).hash());
     h = ke::HashCombine(h, ke::HashInt32(lookup.variadic));
     return h;
 }

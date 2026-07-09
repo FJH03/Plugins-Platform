@@ -1,7 +1,7 @@
 // vim: set sts=2 ts=8 sw=2 tw=99 et:
-// 
+//
 // Copyright (C) 2006-2015 AlliedModders LLC
-// 
+//
 // This file is part of SourcePawn. SourcePawn is free software: you can
 // redistribute it and/or modify it under the terms of the GNU General Public
 // License as published by the Free Software Foundation, either version 3 of
@@ -15,10 +15,10 @@
 
 #include <memory>
 
-#include <sp_vm_api.h>
 #include <amtl/am-cxx.h>
 #include <amtl/am-inlinelist.h>
 #include <amtl/am-mutex.h>
+#include <sp_vm_api.h>
 #include "code-allocator.h"
 #include "plugin-runtime.h"
 #include "stack-frames.h"
@@ -48,230 +48,261 @@ class PerfJitdumpFile;
 // Environment can be created per process.
 class Environment : public ISourcePawnEnvironment
 {
- public:
-  Environment();
-  ~Environment();
+  public:
+    Environment();
+    ~Environment();
 
-  static Environment* New();
+    static Environment* New();
 
-  void Shutdown() override;
-  ISourcePawnEngine* APIv1() override;
-  ISourcePawnEngine2* APIv2() override;
-  int ApiVersion() override {
-    return SOURCEPAWN_API_VERSION;
-  }
+    // @brief Destroy the environment, releasing all resources and freeing
+    // all plugin memory. This should not be called while plugins have
+    // active code running on the stack.
+    void Shutdown();
 
-  // Access the current Environment.
-  static Environment* get();
+    uint32_t GetApiVersion() override { return kApiVersion; }
 
-  bool InstallWatchdogTimer(int timeout_ms);
+    // ISourcePawnEnvironment (from Engine/Engine2)
+    void* AllocatePageMemory(size_t size) override;
+    void SetReadWrite(void* ptr) override;
+    void SetReadExecute(void* ptr) override;
+    void FreePageMemory(void* ptr) override;
 
-  void EnterExceptionHandlingScope(ExceptionHandler* handler) override;
-  void LeaveExceptionHandlingScope(ExceptionHandler* handler) override;
-  bool HasPendingException(const ExceptionHandler* handler) override;
-  const char* GetPendingExceptionMessage(const ExceptionHandler* handler) override;
-  bool EnableDebugBreak() override;
-  void SetDebugMetadataFlags(int flags) override;
+    // Access the current Environment.
+    static Environment* get();
 
-  // Runtime functions.
-  const char* GetErrorString(int err);
-  void ReportError(int code);
-  void ReportError(int code, const char* message);
-  void ReportErrorFmt(int code, const char* message, ...);
-  void ReportErrorVA(const char* fmt, va_list ap);
-  void ReportErrorVA(int code, const char* fmt, va_list ap);
-  void BlamePluginErrorVA(SourcePawn::IPluginFunction* pf, const char* fmt, va_list ap);
+    bool InstallWatchdogTimer(int timeout_ms);
 
-  // Allocate and free executable memory.
-  CodeChunk AllocateCode(size_t size);
-  void WriteDebugMetadata(void* address, uint64_t length, const char* symbol, const CodeDebugMap& mapping);
+    void EnterExceptionHandlingScope(ExceptionHandler* handler) override;
+    void LeaveExceptionHandlingScope(ExceptionHandler* handler) override;
+    bool HasPendingException(const ExceptionHandler* handler) override;
+    const char* GetPendingExceptionMessage(const ExceptionHandler* handler) override;
+    int GetPendingExceptionCode(const ExceptionHandler* handler) override;
 
-  CodeStubs* stubs() {
-    return code_stubs_.get();
-  }
-  BuiltinNatives* builtins() {
-    return builtins_.get();
-  }
+    /**
+     * @brief Enables the line debugger callbacks. This must be called
+     * before any plugins are loaded.
+     */
+    bool EnableDebugBreak();
 
-  // Runtime management.
-  void RegisterRuntime(PluginRuntime* rt);
-  void DeregisterRuntime(PluginRuntime* rt);
-  void PatchAllJumpsForTimeout();
-  void UnpatchAllJumpsFromTimeout();
-  ke::Mutex& lock() {
-    return mutex_;
-  }
+    /**
+     * @brief See JIT_DEBUG_* flags.
+     * Must be set before any plugin code is executed.
+     */
+    void SetDebugMetadataFlags(int flags);
 
-  bool Invoke(PluginContext* cx, const RefPtr<MethodInfo>& method, cell_t* result);
+    // Runtime functions.
+    const char* GetErrorString(int err) override;
+    void ReportError(int code);
+    void ReportError(int code, const char* message);
+    void ReportErrorFmt(int code, const char* message, ...);
+    void ReportErrorVA(const char* fmt, va_list ap);
+    void ReportErrorVA(int code, const char* fmt, va_list ap);
+    void BlamePluginErrorVA(SourcePawn::IPluginFunction* pf, const char* fmt, va_list ap);
 
-  // Helpers.
-  void SetProfiler(IProfilingTool* profiler) {
-    profiler_ = profiler;
-  }
-  IProfilingTool* profiler() const {
-    return profiler_;
-  }
-  bool IsProfilingEnabled() const {
-    return profiling_enabled_;
-  }
-  void EnableProfiling();
-  void DisableProfiling();
+    // Engine2 methods that weren't in the interface but were in the implementation.
+    const char* GetEngineName();
+    const char* GetVersionString();
+    IDebugListener* SetDebugListener(IDebugListener* listener);
+    bool SetJitEnabled(bool enabled);
+    void SetProfilingTool(IProfilingTool* tool);
+    PluginRuntime* LoadBinaryFromFile(const char* file, char* error, size_t maxlength);
+    PluginRuntime* LoadBinaryFromMemory(const char* file, uint8_t* addr, size_t size,
+                                        void (*dtor)(uint8_t*), char* error,
+                                        size_t maxlength);
 
-  void SetJitEnabled(bool enabled);
-  bool IsJitEnabled() const {
-    return jit_enabled_;
-  }
-  void SetDebugger(IDebugListener* debugger) {
-    debugger_ = debugger;
-  }
-  IDebugListener* debugger() const {
-    return debugger_;
-  }
+    // Allocate and free executable memory.
+    CodeChunk AllocateCode(size_t size);
+    void WriteDebugMetadata(void* address, uint64_t length, const char* symbol,
+                            const CodeDebugMap& mapping);
 
-  bool IsDebugBreakEnabled() const {
-    return debug_break_enabled_;
-  }
-  void SetDebugBreakHandler(SPVM_DEBUGBREAK handler) {
-    debug_break_handler_ = handler;
-  }
-  SPVM_DEBUGBREAK debugbreak() const {
-    return debug_break_handler_;
-  }
+    CodeStubs* stubs() {
+        return code_stubs_.get();
+    }
+    BuiltinNatives* builtins() {
+        return builtins_.get();
+    }
 
-  int GetDebugMetadataFlags() const {
-    return debug_metadata_flags_;
-  }
+    // Runtime management.
+    void RegisterRuntime(PluginRuntime* rt);
+    void DeregisterRuntime(PluginRuntime* rt);
+    void PatchAllJumpsForTimeout();
+    void UnpatchAllJumpsFromTimeout();
+    ke::Mutex& lock() {
+        return mutex_;
+    }
 
-  WatchdogTimer* watchdog() const {
-    return watchdog_timer_.get();
-  }
+    bool Invoke(PluginContext* cx, const RefPtr<MethodInfo>& method, cell_t* result);
 
-  bool hasPendingException() const;
-  void clearPendingException();
-  int getPendingExceptionCode() const;
+    // Helpers.
+    void SetProfiler(IProfilingTool* profiler) {
+        profiler_ = profiler;
+    }
+    IProfilingTool* profiler() const {
+        return profiler_;
+    }
+    bool IsProfilingEnabled() const {
+        return profiling_enabled_;
+    }
+    void EnableProfiling();
+    void DisableProfiling();
 
-  // These are indicators used for the watchdog timer.
-  uintptr_t FrameId() const {
-    return frame_id_;
-  }
-  bool RunningCode() const {
-    return !!top_;
-  }
+    bool IsJitEnabled() const {
+        return jit_enabled_;
+    }
+    bool IsJitAvailable();
+    void SetDebugger(IDebugListener* debugger) {
+        debugger_ = debugger;
+    }
+    IDebugListener* debugger() const {
+        return debugger_;
+    }
 
-  void enterInvoke(InvokeFrame* frame);
-  void leaveJitInvoke(JitInvokeFrame* frame);
-  void leaveInvoke();
+    bool IsDebugBreakEnabled() const {
+        return debug_break_enabled_;
+    }
+    int SetDebugBreakHandler(SPVM_DEBUGBREAK handler);
+    SPVM_DEBUGBREAK debugbreak() const {
+        return debug_break_handler_;
+    }
 
-  InvokeFrame* top() const {
-    return top_;
-  }
-  intptr_t* exit_fp() const {
-    return exit_fp_;
-  }
+    int GetDebugMetadataFlags() const {
+        return debug_metadata_flags_;
+    }
 
-  bool spew_interp_ops() const { return spew_interp_ops_; }
-  void set_spew_interp_ops(bool spew) { spew_interp_ops_ = spew; }
+    WatchdogTimer* watchdog() const {
+        return watchdog_timer_.get();
+    }
 
- public:
-  static inline size_t offsetOfTopFrame() {
-    return offsetof(Environment, top_);
-  }
-  static inline size_t offsetOfExceptionCode() {
-    return offsetof(Environment, exception_code_);
-  }
+    bool hasPendingException() const;
+    void clearPendingException();
+    int getPendingExceptionCode() const;
 
-  void* addressOfExit() {
-    return &exit_fp_;
-  }
-  void* addressOfExceptionCode() {
-    return &exception_code_;
-  }
+    // These are indicators used for the watchdog timer.
+    uintptr_t FrameId() const {
+        return frame_id_;
+    }
+    bool RunningCode() const {
+        return !!top_;
+    }
 
- private:
-  bool Initialize();
+    void enterInvoke(InvokeFrame* frame);
+    void leaveJitInvoke(JitInvokeFrame* frame);
+    void leaveInvoke();
 
-  void DispatchReport(const ErrorReport& report);
+    InvokeFrame* top() const {
+        return top_;
+    }
+    intptr_t* exit_fp() const {
+        return exit_fp_;
+    }
 
- private:
-  std::unique_ptr<ISourcePawnEngine> api_v1_;
-  std::unique_ptr<ISourcePawnEngine2> api_v2_;
-  std::unique_ptr<WatchdogTimer> watchdog_timer_;
-  std::unique_ptr<BuiltinNatives> builtins_;
-  ke::Mutex mutex_;
+    bool spew_interp_ops() const {
+        return spew_interp_ops_;
+    }
+    void set_spew_interp_ops(bool spew) {
+        spew_interp_ops_ = spew;
+    }
 
-  bool debug_break_enabled_;
-  SPVM_DEBUGBREAK debug_break_handler_;
+  public:
+    static inline size_t offsetOfTopFrame() {
+        return offsetof(Environment, top_);
+    }
+    static inline size_t offsetOfExceptionCode() {
+        return offsetof(Environment, exception_code_);
+    }
+    static inline size_t offsetOfExit() {
+        return offsetof(Environment, exit_fp_);
+    }
 
-  IDebugListener* debugger_;
-  ExceptionHandler* eh_top_;
-  int exception_code_;
-  char exception_message_[1024];
+    void* addressOfExit() {
+        return &exit_fp_;
+    }
+    void* addressOfExceptionCode() {
+        return &exception_code_;
+    }
 
-  int debug_metadata_flags_;
+  private:
+    bool Initialize();
+
+    void DispatchReport(const ErrorReport& report);
+
+  private:
+    std::unique_ptr<WatchdogTimer> watchdog_timer_;
+    std::unique_ptr<BuiltinNatives> builtins_;
+    ke::Mutex mutex_;
+
+    bool debug_break_enabled_;
+    SPVM_DEBUGBREAK debug_break_handler_;
+
+    IDebugListener* debugger_;
+    ExceptionHandler* eh_top_;
+    int exception_code_;
+    char exception_message_[1024];
+    char engine_name_[256];
+
+    int debug_metadata_flags_;
 
 #if defined(KE_LINUX) && defined(SP_HAS_JIT)
-  // There can only be one of each of these per process, as the filenames are
-  // only distinguished by PID (although jitdump does internally support per-
-  // thread metadata). Once we support multiple environments per process we'll
-  // need to globalise these and add internal locking.
-  std::unique_ptr<PerfJitFile> perf_jit_file_;
-  std::unique_ptr<PerfJitdumpFile> perf_jitdump_file_;
+    // There can only be one of each of these per process, as the filenames are
+    // only distinguished by PID (although jitdump does internally support per-
+    // thread metadata). Once we support multiple environments per process we'll
+    // need to globalise these and add internal locking.
+    std::unique_ptr<PerfJitFile> perf_jit_file_;
+    std::unique_ptr<PerfJitdumpFile> perf_jitdump_file_;
 #endif
 
-  IProfilingTool* profiler_;
-  bool jit_enabled_;
-  bool profiling_enabled_;
-  bool spew_interp_ops_ = false;
+    IProfilingTool* profiler_;
+    bool jit_enabled_;
+    bool profiling_enabled_;
+    bool spew_interp_ops_ = false;
 
-  std::unique_ptr<CodeAllocator> code_alloc_;
-  std::unique_ptr<CodeStubs> code_stubs_;
+    std::unique_ptr<CodeAllocator> code_alloc_;
+    std::unique_ptr<CodeStubs> code_stubs_;
 
-  ke::InlineList<PluginRuntime> runtimes_;
+    ke::InlineList<PluginRuntime> runtimes_;
 
-  uintptr_t frame_id_;
+    uintptr_t frame_id_;
 
-  InvokeFrame* top_;
-  intptr_t* exit_fp_;
+    InvokeFrame* top_;
+    intptr_t* exit_fp_;
 };
 
 class EnterProfileScope
 {
- public:
-  EnterProfileScope(const char* group, const char* name)
-  {
-    if (Environment::get()->IsProfilingEnabled()) {
-      Environment::get()->profiler()->EnterScope(group, name);
-      scope_entered_ = true;
+  public:
+    EnterProfileScope(const char* group, const char* name) {
+        if (Environment::get()->IsProfilingEnabled()) {
+            Environment::get()->profiler()->EnterScope(group, name);
+            scope_entered_ = true;
+        }
     }
-  }
 
-  ~EnterProfileScope()
-  {
-    if (scope_entered_ && Environment::get()->IsProfilingEnabled())
-      Environment::get()->profiler()->LeaveScope();
-  }
+    ~EnterProfileScope() {
+        if (scope_entered_ && Environment::get()->IsProfilingEnabled())
+            Environment::get()->profiler()->LeaveScope();
+    }
 
- private:
-  bool scope_entered_ = false;
+  private:
+    bool scope_entered_ = false;
 };
 
 class ErrorReport : public SourcePawn::IErrorReport
 {
   public:
-  ErrorReport(int code, const char* message, PluginContext* cx, SourcePawn::IPluginFunction* pf);
+    ErrorReport(int code, const char* message, PluginContext* cx, SourcePawn::IPluginFunction* pf);
 
   public: //IErrorReport
-  const char* Message() const override;
-  int Code() const override;
-  IPluginFunction* Blame() const override;
-  bool IsFatal() const override;
-  IPluginContext* Context() const override;
+    const char* Message() const override;
+    int Code() const override;
+    IPluginFunction* Blame() const override;
+    bool IsFatal() const override;
+    IPluginContext* Context() const override;
 
- private:
-  int code_;
-  const char* message_;
-  PluginContext* context_;
-  IPluginFunction* blame_;
+  private:
+    int code_;
+    const char* message_;
+    PluginContext* context_;
+    IPluginFunction* blame_;
 };
 
 } // namespace sp

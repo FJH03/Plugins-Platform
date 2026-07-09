@@ -57,7 +57,7 @@
 #include "RootConsoleMenu.h"
 #include "CellArray.h"
 #include "smn_entitylump.h"
-#include "PseudoAddrManager.h"
+#include "sourcepawn/vm/environment.h"
 #include <bridge/include/BridgeAPI.h>
 #include <bridge/include/IProviderCallbacks.h>
 
@@ -81,13 +81,11 @@ IPluginManager *pluginsys = g_PluginSys.GetOldAPI();
 IForwardManager *forwardsys = &g_Forwards;
 ServerGlobals serverGlobals;
 IAdminSystem *adminsys = &g_Admins;
-ISourcePawnEngine *g_pSourcePawn;
-ISourcePawnEngine2 *g_pSourcePawn2;
+sp::Environment *g_pPawnEnv;
 IScriptManager *scripts = &g_PluginSys;
 IExtensionSys *extsys = &g_Extensions;
 ILogger *logger = &g_Logger;
 CNativeOwner g_CoreNatives;
-PseudoAddressManager pseudoAddr;
 
 EntityLumpParseResult lastParseResult;
 
@@ -117,16 +115,6 @@ static void AddNatives(sp_nativeinfo_t *natives)
 static void RegisterProfiler(IProfilingTool *tool)
 {
 	g_ProfileToolManager.RegisterTool(tool);
-}
-
-static void *FromPseudoAddress(uint32_t paddr)
-{
-	return pseudoAddr.FromPseudoAddress(paddr);
-}
-
-static uint32_t ToPseudoAddress(void *addr)
-{
-	return pseudoAddr.ToPseudoAddress(addr);
 }
 
 static void SetEntityLumpWritable(bool writable)
@@ -172,6 +160,26 @@ public:
 	}
 } sProviderCallbackListener;
 
+static void logic_shutdown()
+{
+	if (g_pPawnEnv)
+	{
+		g_pPawnEnv->Shutdown();
+		delete g_pPawnEnv;
+		g_pPawnEnv = nullptr;
+	}
+}
+
+static void logic_SetJitEnabled(bool enabled)
+{
+	g_pPawnEnv->SetJitEnabled(enabled);
+}
+
+static void logic_SetDebugMetadataFlags(int flags)
+{
+	g_pPawnEnv->SetDebugMetadataFlags(flags);
+}
+
 static sm_logic_t logic =
 {
 	NULL,
@@ -191,11 +199,12 @@ static sm_logic_t logic =
 	RegisterProfiler,
 	CellArray::New,
 	CellArray::Free,
-	FromPseudoAddress,
-	ToPseudoAddress,
 	SetEntityLumpWritable,
 	ParseEntityLumpString,
 	GetEntityLumpString,
+	logic_shutdown,
+	logic_SetJitEnabled,
+	logic_SetDebugMetadataFlags,
 	&g_PluginSys,
 	&g_ShareSys,
 	&g_Extensions,
@@ -223,11 +232,34 @@ static void logic_init(CoreProvider* core, sm_logic_t* _logic)
 	playerhelpers = core->playerhelpers;
 	gamehelpers = core->gamehelpers;
 	menus = core->menus;
-	g_pSourcePawn = *core->spe1;
-	g_pSourcePawn2 = *core->spe2;
+
+	g_pPawnEnv = sp::Environment::New();
+	ISourcePawnEngine *spe1 = g_pPawnEnv->APIv1();
+
+	*core->spe1 = spe1;
+	*core->spe2 = g_pPawnEnv->APIv2();
+	*core->spe_env = g_pPawnEnv;
+
+	g_pPawnEnv->SetDebugListener(&g_DbgReporter);
+
+	const char *timeout = core->GetCoreConfigValue("SlowScriptTimeout");
+	if (timeout == NULL)
+	{
+		timeout = "8";
+	}
+	if (atoi(timeout) != 0)
+	{
+		g_pPawnEnv->InstallWatchdogTimer(atoi(timeout) * 1000);
+	}
+
+	const char *linedebugger = core->GetCoreConfigValue("EnableLineDebugging");
+	if (linedebugger != NULL && strcasecmp(linedebugger, "yes") == 0)
+	{
+		g_pPawnEnv->EnableDebugBreak();
+	}
+
 	SMGlobalClass::head = core->listeners;
 
-	pseudoAddr.Initialize();
 	g_ShareSys.Initialize();
 	g_pCoreIdent = g_ShareSys.CreateCoreIdentity();
 	

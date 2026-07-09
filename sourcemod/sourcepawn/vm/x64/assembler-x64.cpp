@@ -1,7 +1,7 @@
-// vim: set sts=2 ts=8 sw=2 tw=99 et:
-// 
+// vim: set sts=4 ts=8 sw=4 tw=99 et:
+//
 // Copyright (C) 2006-2015 AlliedModders LLC
-// 
+//
 // This file is part of SourcePawn. SourcePawn is free software: you can
 // redistribute it and/or modify it under the terms of the GNU General Public
 // License as published by the Free Software Foundation, either version 3 of
@@ -11,25 +11,42 @@
 // SourcePawn. If not, see http://www.gnu.org/licenses/.
 //
 #include "assembler-x64.h"
+
 #include <string.h>
+
+#include "linking.h"
 
 namespace sp {
 
-void
-Assembler::emitToExecutableMemory(void* code)
-{
-  assert(!outOfMemory());
+size_t Assembler::data_size() const {
+    return address_table_.size() * sizeof(uintptr_t);
+}
 
-  uint8_t* base = reinterpret_cast<uint8_t*>(code);
-  memcpy(base, buffer(), length());
+void Assembler::emitToExecutableMemory(LinkedCode* out) {
+    assert(!outOfMemory());
 
-  for (size_t i = 0; i < absolute_code_refs_.size(); i++) {
-    size_t offset = absolute_code_refs_[i];
-    size_t target = *reinterpret_cast<uint64_t*>(base + offset - 8);
-    assert(target <= length());
+    uint8_t* cursor = out->chunk.address();
+    out->entry = cursor + address_table_.size() * sizeof(uintptr_t);
 
-    *reinterpret_cast<void**>(base + offset - 8) = base + target;
-  }
+    // Relocate entries in address_table_ that need relocation.
+    for (const auto& index : address_table_reloc_) {
+        uintptr_t offset = address_table_[index];
+        assert(offset < code_size());
+
+        uint8_t* target = out->entry + offset;
+        address_table_[index] = reinterpret_cast<uintptr_t>(target);
+    }
+
+    // Emit address table.
+    for (auto riter = address_table_.rbegin(); riter != address_table_.rend(); riter++) {
+        *reinterpret_cast<uintptr_t*>(cursor) = *riter;
+        cursor += sizeof(uintptr_t);
+    }
+
+    assert(out->entry == cursor);
+    assert(out->entry + code_size() <= out->chunk.address() + out->chunk.bytes());
+
+    memcpy(out->entry, buffer(), code_size());
 }
 
 } // namespace sp

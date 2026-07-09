@@ -41,8 +41,8 @@ struct CompileOptions {
     int ctrlchar_org = CTRL_CHAR;
     int compression = 9;
     bool show_includes = false;
-    bool syntax_only = false;
-    int verbosity = 1;             /* verbosity level, 0=quiet, 1=normal, 2=verbose */
+    bool print_ast = false;
+    bool syntax_only = false;    int verbosity = 1;             /* verbosity level, 0=quiet, 1=normal, 2=verbose */
     std::vector<std::pair<std::string, std::string>> predefines;
 };
 

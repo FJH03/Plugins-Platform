@@ -1,33 +1,34 @@
-// vim: set ts=8 sts=2 sw=2 tw=99 et:
+// vim: set ts=8 sts=4 sw=4 tw=99 et:
 //
 // This file is part of SourcePawn.
-// 
+//
 // SourcePawn is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // SourcePawn is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU General Public License
 // along with SourcePawn.  If not, see <http://www.gnu.org/licenses/>.
 //
 #include "jit.h"
+#include "debug-metadata.h"
 #include "environment.h"
 #include "linking.h"
 #include "method-info.h"
 #include "opcodes.h"
-#include "outofline-asm.h"
 #include "pcode-reader.h"
 #include "plugin-runtime.h"
 #include "stack-frames.h"
 #include "watchdog_timer.h"
-#include "debug-metadata.h"
 #if defined(KE_ARCH_X86)
 # include "x86/jit_x86.h"
+#elif defined(KE_ARCH_X64)
+# include "x64/jit_x64.h"
 #endif
 
 namespace sp {
@@ -39,7 +40,7 @@ using namespace SourcePawn;
 CompilerBase::CompilerBase(PluginRuntime* rt, MethodInfo* method)
  : env_(Environment::get()),
    rt_(rt),
-   context_(rt->GetBaseContext()),
+   context_(rt),
    image_(rt_->image()),
    method_info_(method),
    error_(SP_ERROR_NONE),
@@ -49,303 +50,308 @@ CompilerBase::CompilerBase(PluginRuntime* rt, MethodInfo* method)
 {
 }
 
-CompilerBase::~CompilerBase()
-{
+CompilerBase::~CompilerBase() {
+    method_info_->ClearCompilerCache();
 }
 
 CompiledFunction*
-CompilerBase::Compile(PluginContext* cx, RefPtr<MethodInfo> method, int* err)
-{
-  Compiler cc(cx->runtime(), method);
+CompilerBase::Compile(PluginContext* cx, RefPtr<MethodInfo> method, int* err) {
+    Compiler cc(cx->runtime(), method);
 
-  CompiledFunction* fun = cc.emit();
-  if (!fun) {
-    *err = cc.error();
-    return nullptr;
-  }
-
-  method->setCompiledFunction(fun);
-  return fun;
-}
-
-CompiledFunction*
-CompilerBase::emit()
-{
-  graph_ = method_info_->BuildGraph();
-  if (!graph_) {
-    reportError(method_info_->validationError());
-    return nullptr;
-  }
-
-  pcode_start_ = method_info_->pcode_offset();
-  code_start_ = reinterpret_cast<const cell_t*>(rt_->code().bytes + pcode_start_);
-
-  std::string function_name;
-  if (const char* name = rt_->image()->LookupFunction(pcode_start_))
-    function_name = name;
-  else
-    function_name = "anonymous_" + std::to_string(pcode_start_);
-
-  debug_name_ = std::string(rt_->Name()) + "::" + function_name;
-
-#if defined JIT_SPEW
-  Environment::get()->debugger()->OnDebugSpew(
-      "Compiling function %s\n",
-      debug_name_.c_str());
-
-  SpewOpcode(stdout, rt_, code_start_, reader.cip());
-#endif
-
-  CodeDebugMap debug_map;
-
-  // DWARF has special tags for marking the prologue/epilogue, but they're not exposed
-  // by the jitdump format. As that information is useful for humans, we emit a couple
-  // of fake source file mappings to frame the actual function body.
-  debug_map.push_back({ masm.pc(), "<prologue>", 0 });
-
-  emitPrologue();
-
-  for (auto iter = graph_->rpoBegin(); iter != graph_->rpoEnd(); iter++) {
-    block_ = *iter;
-    __ bind(block_->label());
-
-    PcodeReader<CompilerBase> reader(rt_, block_, this);
-    reader.begin();
-
-    while (reader.more()) {
-#if defined JIT_SPEW
-      SpewOpcode(rt_, code_start_, reader.cip());
-#endif
-
-      // Save these for outputting debug mappings after the codegen.
-      auto pcode_addr = reader.cip_offset();
-      auto op_pc = masm.pc();
-
-      // Save the start of the opcode for emitCipMap().
-      op_cip_ = reader.cip();
-
-      if (!reader.visitNext() || error_)
+    CompiledFunction* fun = cc.emit();
+    if (!fun) {
+        *err = cc.error();
         return nullptr;
-
-      // Store debug info if any code was generated.
-      if (masm.pc() != op_pc) {
-        const char* debug_file_name = rt_->image()->LookupFile(pcode_addr);
-
-        if (debug_file_name) {
-          uint32_t debug_line = 0;
-          rt_->image()->LookupLine(pcode_addr, &debug_line);
-
-          debug_map.push_back({ op_pc, debug_file_name, debug_line });
-        } else {
-          // Attempt to do something useful for plugins missing debug info.
-          debug_map.push_back({ op_pc, "<body>", pcode_addr - pcode_start_ });
-        }
-      }
     }
 
-    // Note: the offset is ignored.
-    if (block_->endType() == BlockEnd::Jump)
-      visitJUMP(0);
-  }
+    method->setCompiledFunction(fun);
+    return fun;
+}
 
-  debug_map.push_back({ masm.pc(), "<epilogue>", 0 });
+CompiledFunction*
+CompilerBase::emit() {
+    graph_ = method_info_->BuildGraph();
+    if (!graph_) {
+        reportError(method_info_->validationError());
+        return nullptr;
+    }
 
-  for (size_t i = 0; i < ool_paths_.size(); i++) {
-    OutOfLinePath* path = ool_paths_[i];
-    __ bind(path->label());
-    if (!path->emit(static_cast<Compiler*>(this)))
-      return nullptr;
-  }
+    pcode_start_ = method_info_->pcode_offset();
+    code_start_ = reinterpret_cast<const cell_t*>(rt_->code().bytes + pcode_start_);
 
-  // For each backward jump, emit a little thunk so we can exit from a timeout.
-  // Track the offset of where the thunk is, so the watchdog timer can patch it.
-  for (size_t i = 0; i < backward_jumps_.size(); i++) {
-    BackwardJump& jump = backward_jumps_[i];
-    jump.timeout_offset = masm.pc();
-    __ call(&throw_timeout_);
-    emitCipMapping(jump.cip);
-  }
+    std::string function_name;
+    if (const char* name = rt_->image()->LookupFunction(pcode_start_))
+        function_name = name;
+    else
+        function_name = "anonymous_" + std::to_string(pcode_start_);
 
-  // These have to come last.
-  emitThrowPathIfNeeded(SP_ERROR_DIVIDE_BY_ZERO);
-  emitThrowPathIfNeeded(SP_ERROR_STACKLOW);
-  emitThrowPathIfNeeded(SP_ERROR_STACKMIN);
-  emitThrowPathIfNeeded(SP_ERROR_ARRAY_BOUNDS);
-  emitThrowPathIfNeeded(SP_ERROR_MEMACCESS);
-  emitThrowPathIfNeeded(SP_ERROR_HEAPLOW);
-  emitThrowPathIfNeeded(SP_ERROR_HEAPMIN);
-  emitThrowPathIfNeeded(SP_ERROR_INTEGER_OVERFLOW);
-  emitThrowPathIfNeeded(SP_ERROR_INVALID_NATIVE);
+    debug_name_ = std::string(rt_->Name()) + "::" + function_name;
 
-  // Common path for invoking line debugger.
-  emitDebugBreakHandler();
+#if defined JIT_SPEW
+    Environment::get()->debugger()->OnDebugSpew("Compiling function %s\n", debug_name_.c_str());
 
-  // This has to come very, very last, since it checks whether return paths
-  // are used.
-  emitErrorHandlers();
+    SpewOpcode(stdout, rt_, code_start_, reader.cip());
+#endif
 
-  // perf's translation of the jitdump debug mappings to DWARF ignores the last
-  // record, so we emit a bonus one here so that the epilogue marker is included.
-  debug_map.push_back({ masm.pc(), "<end>", 0 });
+    CodeDebugMap debug_map;
 
-  if (error_)
-    return nullptr;
+    // DWARF has special tags for marking the prologue/epilogue, but they're not exposed
+    // by the jitdump format. As that information is useful for humans, we emit a couple
+    // of fake source file mappings to frame the actual function body.
+    debug_map.push_back({masm.pc(), "<prologue>", 0});
 
-  CodeChunk code = LinkCode(env_, masm, debug_name_.c_str(), debug_map);
-  if (!code.address()) {
-    reportError(SP_ERROR_OUT_OF_MEMORY);
-    return nullptr;
-  }
+    emitPrologue();
 
-  std::unique_ptr<FixedArray<LoopEdge>> edges(
-    new FixedArray<LoopEdge>(backward_jumps_.size()));
-  for (size_t i = 0; i < backward_jumps_.size(); i++) {
-    const BackwardJump& jump = backward_jumps_[i];
-    edges->at(i).offset = jump.pc;
-    edges->at(i).disp32 = int32_t(jump.timeout_offset) - int32_t(jump.pc);
-  }
+    for (auto iter = graph_->rpoBegin(); iter != graph_->rpoEnd(); iter++) {
+        block_ = *iter;
+        __ bind(block_->label());
+        __ bind(block_->address_label());
 
-  std::unique_ptr<FixedArray<CipMapEntry>> cipmap(
-    new FixedArray<CipMapEntry>(cip_map_.size()));
-  memcpy(cipmap->buffer(), cip_map_.data(), cip_map_.size() * sizeof(CipMapEntry));
+        PcodeReader<CompilerBase> reader(rt_, block_, this);
+        reader.begin();
 
-  assert(error_ == SP_ERROR_NONE);
-  return new CompiledFunction(code, pcode_start_, edges.release(), cipmap.release());
+        while (reader.more()) {
+#if defined JIT_SPEW
+            SpewOpcode(rt_, code_start_, reader.cip());
+#endif
+
+            // Save these for outputting debug mappings after the codegen.
+            auto pcode_addr = reader.cip_offset();
+            auto op_pc = masm.pc();
+
+            // Save the start of the opcode for emitCipMap().
+            op_cip_ = reader.cip();
+
+            if (!reader.visitNext() || error_)
+                return nullptr;
+
+            // Store debug info if any code was generated.
+            if (masm.pc() != op_pc) {
+                const char* debug_file_name = rt_->image()->LookupFile(pcode_addr);
+
+                if (debug_file_name) {
+                    uint32_t debug_line = 0;
+                    rt_->image()->LookupLine(pcode_addr, &debug_line);
+
+                    debug_map.push_back({op_pc, debug_file_name, debug_line});
+                } else {
+                    // Attempt to do something useful for plugins missing debug info.
+                    debug_map.push_back({op_pc, "<body>", pcode_addr - pcode_start_});
+                }
+            }
+        }
+
+        // Note: the offset is ignored.
+        if (block_->endType() == BlockEnd::Jump)
+            visitJUMP(0);
+    }
+
+    debug_map.push_back({masm.pc(), "<epilogue>", 0});
+
+    // Common path for invoking line debugger.
+    emitDebugBreakHandler();
+
+    for (auto& call : call_thunks_) {
+        __ bind(&call.label);
+        emitCallThunk(&call);
+    }
+
+    for (auto& error : bounds_errors_) {
+        __ bind(&error.label);
+        emitOutOfBoundsError(&error);
+    }
+
+    // jumpOnError must not be called after this.
+    for (auto& thunk : error_thunks_) {
+        __ bind(&thunk.label);
+        emitErrorThunk(&thunk);
+    }
+
+    // For each backward jump, emit a little thunk so we can exit from a timeout.
+    // Track the offset of where the thunk is, so the watchdog timer can patch it.
+    for (size_t i = 0; i < backward_jumps_.size(); i++) {
+        BackwardJump& jump = backward_jumps_[i];
+        jump.timeout_offset = masm.pc();
+        __ call(&throw_timeout_);
+        emitCipMapping(jump.cip);
+    }
+
+    // These have to come last.
+    emitThrowPathIfNeeded(SP_ERROR_DIVIDE_BY_ZERO);
+    emitThrowPathIfNeeded(SP_ERROR_STACKLOW);
+    emitThrowPathIfNeeded(SP_ERROR_STACKMIN);
+    emitThrowPathIfNeeded(SP_ERROR_ARRAY_BOUNDS);
+    emitThrowPathIfNeeded(SP_ERROR_MEMACCESS);
+    emitThrowPathIfNeeded(SP_ERROR_HEAPLOW);
+    emitThrowPathIfNeeded(SP_ERROR_HEAPMIN);
+    emitThrowPathIfNeeded(SP_ERROR_INTEGER_OVERFLOW);
+    emitThrowPathIfNeeded(SP_ERROR_INVALID_NATIVE);
+    emitThrowPathIfNeeded(SP_ERROR_INVALID_ARRAY_SIZE);
+
+    // This has to come very, very last, since it checks whether return paths
+    // are used.
+    emitErrorHandlers();
+
+    // perf's translation of the jitdump debug mappings to DWARF ignores the last
+    // record, so we emit a bonus one here so that the epilogue marker is included.
+    debug_map.push_back({masm.pc(), "<end>", 0});
+
+    if (error_)
+        return nullptr;
+
+    LinkedCode code = LinkCode(env_, masm, debug_name_.c_str(), debug_map);
+    if (!code.entry) {
+        reportError(SP_ERROR_OUT_OF_MEMORY);
+        return nullptr;
+    }
+
+    std::unique_ptr<FixedArray<LoopEdge>> edges(new FixedArray<LoopEdge>(backward_jumps_.size()));
+    for (size_t i = 0; i < backward_jumps_.size(); i++) {
+        const BackwardJump& jump = backward_jumps_[i];
+        edges->at(i).offset = jump.pc;
+        edges->at(i).disp32 = int32_t(jump.timeout_offset) - int32_t(jump.pc);
+    }
+
+    std::unique_ptr<FixedArray<CipMapEntry>> cipmap(new FixedArray<CipMapEntry>(cip_map_.size()));
+    memcpy(cipmap->buffer(), cip_map_.data(), cip_map_.size() * sizeof(CipMapEntry));
+
+    assert(error_ == SP_ERROR_NONE);
+    return new CompiledFunction(code, pcode_start_, edges.release(), cipmap.release());
+}
+
+void CompilerBase::emitErrorThunk(ErrorThunk* thunk) {
+    // For each path that had an error check, bind it to an error routine and
+    // add it to the cip map. What we'll get is something like:
+    //
+    //   compare dividend, 0
+    //   jump-if-equal error_thunk_0
+    //
+    // error_thunk_0:
+    //   call integer_overflow
+    //
+    // integer_overflow:
+    //   mov error-code-reg, SP_ERROR_DIVIDE_BY_ZERO
+    //   jump report_error
+    //
+    // report_error:
+    //   create exit frame
+    //   push error-code-reg
+    //   call InvokeReportError(int err)
+    //
+
+    // If there's no error code, it should be in eax. Otherwise we'll jump to
+    // a path that sets eax to a hardcoded value.
+    if (thunk->err == 0)
+        __ call(&report_error_);
+    else
+        __ call(&throw_error_code_[thunk->err]);
+
+    emitCipMapping(thunk->cip);
 }
 
 void
-CompilerBase::emitErrorPath(ErrorPath* path)
-{
-  // For each path that had an error check, bind it to an error routine and
-  // add it to the cip map. What we'll get is something like:
-  //
-  //   compare dividend, 0
-  //   jump-if-equal error_thunk_0
-  //
-  // error_thunk_0:
-  //   call integer_overflow
-  //
-  // integer_overflow:
-  //   mov error-code-reg, SP_ERROR_DIVIDE_BY_ZERO
-  //   jump report_error
-  //
-  // report_error:
-  //   create exit frame
-  //   push error-code-reg
-  //   call InvokeReportError(int err)
-  //
+CompilerBase::emitThrowPathIfNeeded(int err) {
+    assert(err < SP_MAX_ERROR_CODES);
 
-  // If there's no error code, it should be in eax. Otherwise we'll jump to
-  // a path that sets eax to a hardcoded value.
-  __ alignStack();
-  if (path->err == 0)
-    __ call(&report_error_);
-  else
-    __ call(&throw_error_code_[path->err]);
+    if (!throw_error_code_[err].used())
+        return;
 
-  emitCipMapping(path->cip);
+    __ bind(&throw_error_code_[err]);
+    emitThrowPath(err);
 }
 
 void
-CompilerBase::emitThrowPathIfNeeded(int err)
-{
-  assert(err < SP_MAX_ERROR_CODES);
-
-  if (!throw_error_code_[err].used())
-    return;
-
-  __ bind(&throw_error_code_[err]);
-  emitThrowPath(err);
-}
-
-void
-CompilerBase::reportError(int err)
-{
-  // Break here to get an error report stack.
-  error_ = err;
+CompilerBase::reportError(int err) {
+    // Break here to get an error report stack.
+    error_ = err;
 }
 
 int
-CompilerBase::CompileFromThunk(PluginContext* cx, cell_t pcode_offs, void** addrp, uint8_t* pc)
-{
-  // If the watchdog timer has declared a timeout, we must process it now,
-  // and possibly refuse to compile, since otherwise we will compile a
-  // function that is not patched for timeouts.
-  if (!Environment::get()->watchdog()->HandleInterrupt())
-    return SP_ERROR_TIMEOUT;
+CompilerBase::CompileFromThunk(PluginContext* cx, cell_t pcode_offs, void** addrp, uint8_t* pc) {
+    // If the watchdog timer has declared a timeout, we must process it now,
+    // and possibly refuse to compile, since otherwise we will compile a
+    // function that is not patched for timeouts.
+    if (!Environment::get()->watchdog()->HandleInterrupt())
+        return SP_ERROR_TIMEOUT;
 
-  RefPtr<MethodInfo> method = cx->runtime()->AcquireMethod(pcode_offs);
-  if (!method)
-    return SP_ERROR_INVALID_ADDRESS;
+    RefPtr<MethodInfo> method = cx->runtime()->AcquireMethod(pcode_offs);
+    if (!method)
+        return SP_ERROR_INVALID_ADDRESS;
 
-  CompiledFunction* fn = method->jit();
-  if (!fn) {
-    int err;
-    fn = Compile(cx, method, &err);
-    if (!fn)
-      return err;
-  }
+    CompiledFunction* fn = method->jit();
+    if (!fn) {
+        int err;
+        fn = Compile(cx, method, &err);
+        if (!fn)
+            return err;
+    }
 
 #if defined JIT_SPEW
-  Environment::get()->debugger()->OnDebugSpew(
-      "Patching thunk to %s::%s\n",
-      cx->runtime()->Name(),
-      cx->runtime()->image()->LookupFunction(pcode_offs));
+    Environment::get()->debugger()->OnDebugSpew("Patching thunk to %s::%s\n", cx->runtime()->Name(),
+                                                cx->runtime()->image()->LookupFunction(pcode_offs));
 #endif
 
-  *addrp = fn->GetEntryAddress();
+    *addrp = fn->GetEntryAddress();
 
-  /* Right now, we always keep the code RWE */
-  PatchCallThunk(pc, fn->GetEntryAddress());
-  return SP_ERROR_NONE;
+    /* Right now, we always keep the code RWE */
+    PatchCallThunk(pc, fn->GetEntryAddress());
+    return SP_ERROR_NONE;
 }
 
 // Find the |ebp| associated with the entry frame. We use this to drop out of
 // the entire scripted call stack.
 void*
-CompilerBase::find_entry_fp()
-{
-  void* fp = nullptr;
+CompilerBase::find_entry_fp() {
+    void* fp = nullptr;
 
-  for (JitFrameIterator iter(Environment::get()); !iter.done(); iter.next()) {
-    FrameLayout* frame = iter.frame();
-    if (frame->frame_type == JitFrameType::Entry)
-      break;
-    fp = frame->prev_fp;
-  }
+    for (JitFrameIterator iter(Environment::get()); !iter.done(); iter.next()) {
+        FrameLayout* frame = iter.frame();
+        if (frame->frame_type() == JitFrameType::Entry)
+            break;
+        fp = frame->prev_fp;
+    }
 
-  assert(fp);
-  return fp;
+    assert(fp);
+    return fp;
 }
 
 // Exit frame is a JitExitFrameForHelper.
 void
-CompilerBase::InvokeReportError(int err)
-{
-  Environment::get()->ReportError(err);
+CompilerBase::InvokeReportError(int err) {
+    Environment::get()->ReportError(err);
 }
 
 // Exit frame is a JitExitFrameForHelper. This is a special function since we
 // have to notify the watchdog timer that we're unblocked.
 void
-CompilerBase::InvokeReportTimeout()
-{
-  Environment::get()->watchdog()->NotifyTimeoutReceived();
-  InvokeReportError(SP_ERROR_TIMEOUT);
+CompilerBase::InvokeReportTimeout() {
+    Environment::get()->watchdog()->NotifyTimeoutReceived();
+    InvokeReportError(SP_ERROR_TIMEOUT);
 }
 
-bool
-ErrorPath::emit(Compiler* cc)
-{
-  cc->emitErrorPath(this);
-  return true;
+bool CompilerBase::visitJUMP(cell_t offset) {
+    assert(block_->successors().size() == 1);
+
+    Block* successor = block_->successors()[0];
+    if (isNextBlock(successor)) {
+        // We'll visit this block next, and this terminates the block, so there's
+        // no need to emit a jump instruction.
+        assert(!isBackedge(successor));
+        return true;
+    }
+
+    Label* target = successor->label();
+    if (isBackedge(successor)) {
+        __ jmp32(target);
+        backward_jumps_.push_back(BackwardJump(masm.pc(), op_cip_));
+    } else {
+        __ jmp(target);
+    }
+    return true;
 }
 
-bool
-OutOfBoundsErrorPath::emit(Compiler* cc)
-{
-  cc->emitOutOfBoundsErrorPath(this);
-  return true;
+cell_t CompilerBase::StackOffset(cell_t slot) {
+    return method_info_->StackOffset(slot);
 }
 
 } // namespace sp
