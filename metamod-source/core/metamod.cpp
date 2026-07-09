@@ -1199,7 +1199,7 @@ ProcessVDF(const char *path, bool &skipped)
 {
 	PluginId id;
 	bool already;
-	char alias[24], file[255], full_path[255], error[255];
+	char alias[32], file[255], full_path[255], error[255];
 
 	if (!provider->ProcessVDF(path, file, sizeof(file), alias, sizeof(alias)))
 	{
