@@ -18,8 +18,10 @@ class PackageHelpers:
     for bin_task in SM.spcomp_bins:
       if bin_task.target.arch == 'x86_64':
         root, ext = os.path.splitext(os.path.basename(bin_task.binary.path))
-        file = root + '64' + ext
-        self.builder.AddCopy(bin_task.binary, os.path.join(target_folder, file))
+        file64 = root + '64' + ext
+        self.builder.AddCopy(bin_task.binary, os.path.join(target_folder, file64))
+        # Also copy as spcomp.exe so callers can use the unified name
+        self.builder.AddCopy(bin_task.binary, self.folder_map[target_folder])
       else:
         self.builder.AddCopy(bin_task.binary, self.folder_map[target_folder])
     

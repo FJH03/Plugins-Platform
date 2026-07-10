@@ -15,11 +15,8 @@ folder_list = [
   'addons/sourcemod/gamedata/sdktools.games',
   'addons/sourcemod/gamedata/sm-cstrike.games',
   'addons/sourcemod/configs',
-  'addons/sourcemod/configs/geoip',
   'addons/sourcemod/translations',
-  'addons/sourcemod/logs',
   'addons/sourcemod/extensions',
-  'addons/sourcemod/data',
   'addons/sourcemod/configs/sql-init-scripts',
   'addons/sourcemod/configs/sql-init-scripts/mysql',
   'addons/sourcemod/configs/sql-init-scripts/pgsql',
@@ -62,6 +59,12 @@ for cxx_task in SM.extensions:
     builder.AddCopy(cxx_task.binary, folder_map['addons/sourcemod/extensions/x64'])
   else:
     builder.AddCopy(cxx_task.binary, folder_map['addons/sourcemod/extensions'])
+
+# mysql prebuilt DLL, copy from source tree
+if 'x86_64' in SM.target_archs:
+  mysql_dll = os.path.join(builder.sourcePath, 'extensions', 'mysql', 'dbi.mysql.ext.dll')
+  if os.path.isfile(mysql_dll):
+    builder.AddCopy(mysql_dll, folder_map['addons/sourcemod/extensions/x64'])
 
 helpers.CopySpcomp('addons/sourcemod/scripting')
 
