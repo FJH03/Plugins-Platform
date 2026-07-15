@@ -129,7 +129,7 @@ static cell_t sm_GetFunctionByName(IPluginContext *pContext, const cell_t *param
 	pContext->LocalToString(params[2], &name);
 
 	/* Get public function index */
-	if (pContext->GetBaseRuntime()->FindPublicByName(name, &idx) == SP_ERROR_NOT_FOUND)
+	if (pPlugin->GetBaseContext()->GetBaseRuntime()->FindPublicByName(name, &idx) == SP_ERROR_NOT_FOUND)
 	{
 		/* Return INVALID_FUNCTION if not found */
 		return pContext->GetNullFunctionValue();
@@ -558,12 +558,12 @@ static cell_t sm_CallFinish(IPluginContext *pContext, const cell_t *params)
 
 	auto local_args = sArgs;
 
-	// Note: Execute() swallows exceptions, so this is okay.
+	// Note: ExceptionHandler and Execute() swallow exceptions, so this is okay.
 	if (s_pFunction)
 	{
 		IPluginFunction *pFunction = s_pFunction;
 		ResetCall();
-		DetectExceptions eh(pContext);
+		ExceptionHandler eh(pContext);
 		if (!pFunction->Invoke(local_args, result))
 			return eh.Code();
 	} else {
