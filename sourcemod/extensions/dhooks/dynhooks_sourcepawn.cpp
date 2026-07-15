@@ -255,15 +255,19 @@ ICallingConvention *ConstructCallingConvention(HookSetup *setup)
 	returnType.custom_register = None;
 
 #ifdef DYNAMICHOOKS_x86_64
-#ifdef WIN32
 	if (setup->callConv == CallConv_THISCALL) {
 		DataTypeSized_t type;
 		type.type = DATA_TYPE_POINTER;
 		type.size = GetDataTypeSize(type, sizeof(void*));
+		// On x64 Windows (Microsoft convention), 'this' is passed in RCX.
+		// On x64 Linux (SystemV convention), 'this' is passed in RDI.
+#if defined(_WIN32) || defined(KE_WINDOWS)
 		type.custom_register = RCX;
+#elif defined(__linux__) || defined(KE_LINUX)
+		type.custom_register = RDI;
+#endif
 		vecArgTypes.insert(vecArgTypes.begin(), type);
 	}
-#endif
 #endif
 
 	ICallingConvention *pCallConv = nullptr;
