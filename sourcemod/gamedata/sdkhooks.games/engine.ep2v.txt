@@ -37,151 +37,151 @@
 			//CBaseEntity::Spawn()
 			"Spawn"
 			{
-				"windows64"	"22"
-				"linux64"	"23"
+				"windows64"	"27"
+				"linux64"	"28"
 			}
 			
 			//CBaseEntity::Think()
 			"Think"
 			{
-				"windows64"	"47"
-				"linux64"	"48"
+				"windows64"	"48"
+				"linux64"	"49"
 			}
 			
 			//CBaseEntity::TraceAttack(CTakeDamageInfo const&, Vector const&, CGameTrace*, CDmgAccumulator*)
 			"TraceAttack"
 			{
-				"windows64"	"60"
-				"linux64"	"61"
+				"windows64"	"62"
+				"linux64"	"63"
 			}
 			/* CBaseEntity::CanBeHitByMeleeAttack(CBaseEntity*) */
 			//CBaseEntity::OnTakeDamage(CTakeDamageInfo const&)
 			"OnTakeDamage"
 			{
-				"windows64"	"62"
-				"linux64"	"63"
+				"windows64"	"64"
+				"linux64"	"65"
 			}
 			
 			//CBaseEntity::Use(CBaseEntity*, CBaseEntity*, USE_TYPE, float)
 			"Use"
 			{
-				"windows64"	"97"
-				"linux64"	"98"
+				"windows64"	"99"
+				"linux64"	"100"
 			}
 			//CBaseEntity::StartTouch(CBaseEntity*)
 			"StartTouch"
 			{
-				"windows64"	"98"
-				"linux64"	"99"
+				"windows64"	"100"
+				"linux64"	"101"
 			}
 			//CBaseEntity::Touch(CBaseEntity*)
 			"Touch"
 			{
-				"windows64"	"99"
-				"linux64"	"100"
+				"windows64"	"101"
+				"linux64"	"102"
 			}
 			//CBaseEntity::EndTouch(CBaseEntity*)
 			"EndTouch"
 			{
-				"windows64"	"100"
-				"linux64"	"101"
+				"windows64"	"102"
+				"linux64"	"103"
 			}
 			/* CBaseEntity::StartBlocked(CBaseEntity*) */
 			//CBaseEntity::Blocked(CBaseEntity*)
 			"Blocked"
 			{
-				"windows64"	"102"
-				"linux64"	"103"
+				"windows64"	"104"
+				"linux64"	"105"
 			}
 			
 			//CBaseEntity::FireBullets(FireBulletsInfo_t const&)
 			"FireBullets"
 			{
-				"windows64"	"112"
-				"linux64"	"113"
+				"windows64"	"115"
+				"linux64"	"116"
 			}
 			
 			//CBaseEntity::GetMaxHealth() const
 			"GetMaxHealth"
 			{
-				"windows64"	"117"
-				"linux64"	"118"
+				"windows64"	"120"
+				"linux64"	"121"
 			}
 			
 			//CBasePlayer::VPhysicsUpdate(IPhysicsObject*)
 			"VPhysicsUpdate"
 			{
-				"windows64"	"157"
-				"linux64"	"158"
+				"windows64"	"163"
+				"linux64"	"164"
 			}
 			
 			//CBaseEntity::NetworkStateChanged_m_hGroundEntity(void*)
 			"GroundEntChanged"
 			{
-				"windows64"	"177"
-				"linux64"	"179"
+				"windows64"	"183"
+				"linux64"	"185"
 			}
 			
 			
 			//CWeaponCSBaseGun::Reload()
 			"Reload"
 			{
-				"windows64"	"268"
-				"linux64"	"269"
+				"windows64"	"279"
+				"linux64"	"280"
 			}
 			
 			
 			//CBaseCombatCharacter::Weapon_CanUse(CBaseCombatWeapon*)
 			"Weapon_CanUse"
 			{
-				"windows64"	"259"
-				"linux64"	"260"
+				"windows64"	"269"
+				"linux64"	"270"
 			}
 			//CBaseCombatCharacter::Weapon_Equip(CBaseCombatWeapon*)
 			"Weapon_Equip"
 			{
-				"windows64"	"260"
-				"linux64"	"261"
+				"windows64"	"270"
+				"linux64"	"271"
 			}
 			/* CBaseCombatCharacter::Weapon_EquipAmmoOnly(CBaseCombatWeapon*) */
 			//CBaseCombatCharacter::Weapon_Drop(CBaseCombatWeapon*, Vector const*, Vector const*)
 			"Weapon_Drop"
 			{
-				"windows64"	"262"
-				"linux64"	"263"
+				"windows64"	"272"
+				"linux64"	"273"
 			}
 			//CBaseCombatCharacter::Weapon_Switch(CBaseCombatWeapon*, int)
 			"Weapon_Switch"
 			{
-				"windows64"	"263"
-				"linux64"	"264"
+				"windows64"	"273"
+				"linux64"	"274"
 			}
 			/* CBaseCombatCharacter::Weapon_ShootPosition() */
 			//CBaseCombatCharacter::Weapon_CanSwitchTo(CBaseCombatWeapon*)
 			"Weapon_CanSwitchTo"
 			{
-				"windows64"	"265"
-				"linux64"	"266"
+				"windows64"	"275"
+				"linux64"	"276"
 			}
 			
 			//NextBotCombatCharacter::OnTakeDamage_Alive(CTakeDamageInfo const&)
 			"OnTakeDamage_Alive"
 			{
-				"windows64"	"271"
-				"linux64"	"272"
+				"windows64"	"282"
+				"linux64"	"283"
 			}
 			
 			//CBasePlayer::PreThink()
 			"PreThink"
 			{
-				"windows64"	"331"
-				"linux64"	"332"
+				"windows64"	"344"
+				"linux64"	"345"
 			}
 			//CBasePlayer::PostThink()
 			"PostThink"
 			{
-				"windows64"	"332"
-				"linux64"	"333"
+				"windows64"	"345"
+				"linux64"	"346"
 			}
 		}
 	}

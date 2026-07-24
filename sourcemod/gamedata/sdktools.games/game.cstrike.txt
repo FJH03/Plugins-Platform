@@ -44,106 +44,106 @@
 			//CBaseEntity::Activate()
 			"Activate"
 			{
-				"windows64"	"33"
-				"linux64"	"34"
+				"windows64"	"34"
+				"linux64"	"35"
 			}
 			
 			//CBaseEntity::AcceptInput(char const*, CBaseEntity*, CBaseEntity*, variant_t, int)
 			"AcceptInput"
 			{
-				"windows64"	"36"
-				"linux64"	"37"
+				"windows64"	"37"
+				"linux64"	"38"
 			}
 			
 			//CBaseEntity::Teleport(Vector const*, QAngle const*, Vector const*)
 			"Teleport"
 			{
-				"windows64"	"108"
-				"linux64"	"109"
+				"windows64"	"111"
+				"linux64"	"112"
 			}
 			
 			//CBaseEntity::EyeAngles()
 			"EyeAngles"
 			{
-				"windows64"	"131"
-				"linux64"	"132"
+				"windows64"	"137"
+				"linux64"	"138"
 			}
 			
 			//CBaseEntity::GetVelocity(Vector*, Vector*)
 			"GetVelocity"
 			{
-				"windows64"	"140"
-				"linux64"	"141"
+				"windows64"	"146"
+				"linux64"	"147"
 			}
 			
 			//CBaseAnimating::GetAttachment(int, matrix3x4_t&)
 			"GetAttachment"
 			{
-				"windows64"	"204"
-				"linux64"	"205"
+				"windows64"	"212"
+				"linux64"	"213"
 			}
 			
 			//CBaseAnimating::Ignite(float, bool, float, bool)
 			"Ignite"
 			{
-				"windows64"	"208"
-				"linux64"	"209"
+				"windows64"	"217"
+				"linux64"	"218"
 			}
 			
 			//CBaseAnimating::Extinguish()
 			"Extinguish"
 			{
-				"windows64"	"212"
-				"linux64"	"213"
+				"windows64"	"221"
+				"linux64"	"222"
 			}
 			
 			//CBaseCombatCharacter::GiveAmmo(int, int, bool)
 			"GiveAmmo"
 			{
-				"windows64"	"251"
-				"linux64"	"252"
+				"windows64"	"261"
+				"linux64"	"262"
 			}
 			
 			//CBaseCombatCharacter::Weapon_Equip(CBaseCombatWeapon*)
 			"WeaponEquip"
 			{
-				"windows64"	"260"
-				"linux64"	"261"
+				"windows64"	"270"
+				"linux64"	"271"
 			}
 			
 			//CBaseCombatCharacter::Weapon_GetSlot(int) const
 			"Weapon_GetSlot"
 			{
-				"windows64"	"267"
-				"linux64"	"268"
+				"windows64"	"277"
+				"linux64"	"278"
 			}
 			/* CBaseCombatCharacter::AddPlayerItem(CBaseCombatWeapon*) */
 			//CBasePlayer::RemovePlayerItem(CBaseCombatWeapon*)
 			"RemovePlayerItem"
 			{
-				"windows64"	"269"
-				"linux64"	"270"
+				"windows64"	"280"
+				"linux64"	"281"
 			}
 			
 			//CBasePlayer::GiveNamedItem(char const*, int)
 			"GiveNamedItem"
 			{
-				"windows64"	"400"
-				"linux64"	"401"
+				"windows64"	"417"
+				"linux64"	"418"
 			}
 			
 			//CBasePlayer::PlayerRunCommand(CUserCmd*, IMoveHelper*)
 			"PlayerRunCmd"
 			{
-				"windows64"	"418"
-				"linux64"	"419"
+				"windows64"	"435"
+				"linux64"	"436"
 			}
 			
 			//CBasePlayer::CommitSuicide(bool, bool)
 			"CommitSuicide"
 			{
-				"windows64"	"439"
-				"linux64"	"439"
+				"windows64"	"460"
+				"linux64"	"460"
 			}
 		}
 

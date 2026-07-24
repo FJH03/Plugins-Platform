@@ -17,17 +17,17 @@
     },
     "source2": false,
     "include_paths": [
-        "source-engine-czero/public",
-        "source-engine-czero/public/engine",
-        "source-engine-czero/public/mathlib",
-        "source-engine-czero/public/vstdlib",
-        "source-engine-czero/public/tier0",
-        "source-engine-czero/public/tier1",
-        "source-engine-czero/public/toolframework",
-        "source-engine-czero/public/game/server",
-        "source-engine-czero/game/server",
-        "source-engine-czero/game/shared",
-        "source-engine-czero/common"
+        "CSSO-NOOFFICIAL-MP/public",
+        "CSSO-NOOFFICIAL-MP/public/engine",
+        "CSSO-NOOFFICIAL-MP/public/mathlib",
+        "CSSO-NOOFFICIAL-MP/public/vstdlib",
+        "CSSO-NOOFFICIAL-MP/public/tier0",
+        "CSSO-NOOFFICIAL-MP/public/tier1",
+        "CSSO-NOOFFICIAL-MP/public/toolframework",
+        "CSSO-NOOFFICIAL-MP/public/game/server",
+        "CSSO-NOOFFICIAL-MP/game/server",
+        "CSSO-NOOFFICIAL-MP/game/shared",
+        "CSSO-NOOFFICIAL-MP/common"
     ],
     "linux": {
         "defines": [
@@ -51,8 +51,8 @@
         "x86_64": {
             "cflags": ["-march=nocona", "-march=core2"],
             "dynamic_libs": [
-                "source-engine-czero/lib/public/linux64/libtier0_srv.so",
-                "source-engine-czero/lib/public/linux64/libvstdlib_srv.so"
+                "CSSO-NOOFFICIAL-MP/lib/public/linux64/libtier0_srv.so",
+                "CSSO-NOOFFICIAL-MP/lib/public/linux64/libvstdlib_srv.so"
             ]
         },
         "uses_system_cxxlib": false
@@ -64,10 +64,10 @@
         ],
         "x86_64": {
             "libs": [
-                "source-engine-czero/build/tier0/tier0.lib",
-                "source-engine-czero/build/vstdlib/vstdlib.lib",
-                "source-engine-czero/build/mathlib/mathlib.lib",
-                "source-engine-czero/build/tier1/tier1.lib"
+                "CSSO-NOOFFICIAL-MP/build/tier0/tier0.lib",
+                "CSSO-NOOFFICIAL-MP/build/vstdlib/vstdlib.lib",
+                "CSSO-NOOFFICIAL-MP/build/mathlib/mathlib.lib",
+                "CSSO-NOOFFICIAL-MP/build/tier1/tier1.lib"
             ]
         }
     }
