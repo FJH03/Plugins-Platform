@@ -363,7 +363,7 @@ mm_DetermineBackendS1(QueryValveInterface engineFactory, QueryValveInterface ser
 	TF2branch:
 					void *lib = (void *)serverFactory;
 					void *addr;
-					if (strcmp(game_name, "cstrike") == 0
+					if (strcmp(game_name, "cstrike") == 0 || strcmp(game_name, "csso") == 0
 						|| (addr = mm_FindPattern(lib, "DT_CSPlayerResource", sizeof("DT_CSPlayerResource") - 1)))
 					{
 						return MMBackend_CSS;

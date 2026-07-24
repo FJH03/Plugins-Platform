@@ -118,6 +118,22 @@ static bool DoesGameMatch(const char *value)
 	{
 		return true;
 	}
+
+	/*
+	 * Game folder aliases.
+	 *
+	 * Some mods are forked/renamed but remain binary-compatible with an
+	 * upstream game for extension/gamedata selection.
+	 */
+#if defined PLATFORM_WINDOWS
+	if (strcasecmp(g_Game, "csso") == 0 && strcasecmp(value, "cstrike") == 0)
+#else
+	if (strcmp(g_Game, "csso") == 0 && strcmp(value, "cstrike") == 0)
+#endif
+	{
+		return true;
+	}
+
 	return false;
 }
 

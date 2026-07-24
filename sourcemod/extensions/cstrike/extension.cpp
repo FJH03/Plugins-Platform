@@ -65,9 +65,10 @@ ISDKTools *g_pSDKTools = NULL;
 bool CStrike::SDK_OnLoad(char *error, size_t maxlength, bool late)
 {
 #if SOURCE_ENGINE != SE_CSGO
-	if (strcmp(g_pSM->GetGameFolderName(), "cstrike") != 0)
+	const char *gamedir = g_pSM->GetGameFolderName();
+	if (strcmp(gamedir, "cstrike") != 0 && strcmp(gamedir, "csso") != 0)
 	{
-		ke::SafeStrcpy(error, maxlength, "Cannot Load Cstrike Extension on mods other than CS:S and CS:GO");
+		ke::SafeStrcpy(error, maxlength, "Cannot Load Cstrike Extension on mods other than CS:S/CS:SO-compatible games");
 		return false;
 	}
 #endif

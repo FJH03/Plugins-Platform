@@ -533,7 +533,7 @@ static cell_t GetEngineVersion(IPluginContext *pContext, const cell_t *params)
 		const char *gamedir = g_SourceMod.GetGameFolderName();
 		if (strcmp(gamedir, "tf") == 0)
 			return SOURCE_ENGINE_TF2;
-		else if (strcmp(gamedir, "cstrike") == 0)
+		else if (strcmp(gamedir, "cstrike") == 0 || strcmp(gamedir, "csso") == 0)
 			return SOURCE_ENGINE_CSS;
 		else if (strcmp(gamedir, "dod") == 0)
 			return SOURCE_ENGINE_DODS;
