@@ -65,14 +65,14 @@
 			// This is an offset into CCStrike15ItemDefinition that contains the loadoutslot IGNORING the team param (the second param in the function)
 			"LoadoutSlotOffset"
 			{
-				"windows64"	"588"
+				"windows64"	"912"
 				"linux64"	"908"
 			}
 			// Offset into CEconItemSchema * to a hashmap of all itemdefs
 			// Offset can be found in... GetItemDefinitionMutable (easy to get offset on windows should be the same)
 			"ItemDefHashOffset"
 			{
-				"windows64"	"172"
+				"windows64"	"232"
 				"linux64"	"232"
 			}
 		}
@@ -81,7 +81,10 @@
 			"GetItemSchema"
 			{
 				"library"	"server"
-				"windows64"	"\xA1\x2A\x2A\x2A\x2A\x85\xC0\x75\x2A\xA1\x2A\x2A\x2A\x2A\x56\x68\x2A\x2A\x00\x00\x8B"
+				/* CEconItemSystem *ItemSystem() : the caller (util_cstrike.cpp) adds sizeof(void*)
+				 * to get at CEconItemSchema on Windows.  Matching GEconItemSchema() instead would
+				 * double-apply that offset. */
+				"windows64"	"\x48\x83\xEC\x28\x48\x8B\x05\x2A\x2A\x2A\x2A\x48\x85\xC0\x75\x2A\xB9\x80\x0A\x00\x00\x48\x89\x5C"
 				"linux64"	"\x55\x48\x89\xE5\xE8\x2A\x2A\x2A\x2A\x5D\x48\x83\xC0\x08\xC3"
 			}
 			"RoundRespawn"
@@ -233,7 +236,7 @@
 				"windows64"
 				{
 					"signature"	"NET_SendPacket"
-					"offset"	"4"
+					"offset"	"46"
 				}
 				"linux64"
 				{
@@ -250,7 +253,7 @@
 				"library"	"engine"
 				// "[NET] Cannot send %d-byte packet to %s.  MTU is %u.  %02x %02x %02x %02x %02x\n"
 				// _Z14NET_SendPacketP11INetChanneliRK10ns_addressPKhiP8bf_writebj
-				"windows64"	"\x8B\xFA\x81\xFB\xB0\x04\x00\x00\x7E"
+				"windows64"	"\x40\x53\x56\x57\x41\x56\x48\x81\xEC\xD8\x00\x00\x00\x48\x8B\x05\x2A\x2A\x2A\x2A\x48\x33\xC4\x48\x89\x84\x24\xA0\x00\x00\x00\x4C\x63\xF1\x41\x8B\xF9\x49\x8B\xF0\x48\x8B\xDA\x41\x81\xF9\xB0\x04\x00\x00\x7E\x58"
 				"linux64"	"\x31\xC0\x81\xF9\xB0\x04\x00\x00\x0F"
 			}
 		}
