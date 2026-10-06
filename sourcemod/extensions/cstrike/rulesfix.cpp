@@ -106,7 +106,18 @@ void RulesFix::OnUnload()
 
 void NotifyAllCVars()
 {
-	ICvar::Iterator iter(g_pCVar);
+	/* ICvar::Iterator's destructor deletes the iterator object that the engine
+	 * (vstdlib) allocated in FactoryInternalIterator(). On this engine build
+	 * that delete trips the heap validator (the block is reported as already
+	 * free), so keep a single iterator alive for the process lifetime instead
+	 * of constructing and destroying one per call. */
+	static ICvar::Iterator *s_pIterator = nullptr;
+	if (!s_pIterator)
+	{
+		s_pIterator = new ICvar::Iterator(g_pCVar);
+	}
+
+	ICvar::Iterator &iter = *s_pIterator;
 	for (iter.SetFirst(); iter.IsValid(); iter.Next())
 	{
 		ConCommandBase *cmd = iter.Get();
