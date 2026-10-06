@@ -31,23 +31,23 @@
 			/* Offset into CBaseTempEntity signature address */
 			"s_pTempEntities"
 			{
-				"windows64"	"4"
-				"linux64"	"18"
+				"windows64"	"17"
+				"linux64"	""
 			}
 			"GetTEName"
 			{
-				"windows64"	"4"
-				"linux64"	"8"
+				"windows64"	"8"
+				"linux64"	""
 			}
 			"GetTENext"
 			{
-				"windows64"	"8"
-				"linux64"	"16"
+				"windows64"	"16"
+				"linux64"	""
 			}
 			"TE_GetServerClass"
 			{
 				"windows64"	"0"
-				"linux64"	"0"
+				"linux64"	""
 			}
 		}
 
@@ -56,8 +56,9 @@
 			"CBaseTempEntity"
 			{
 				"library"	"server"
-				"windows64"	"\x89\x41\x04\xA1\x2A\x2A\x2A\x2A\x89\x41\x08\x89\x0D\x2A\x2A\x2A\x2A\xC7"
-				"linux64"	"\x48\x8D\x05\x2A\x2A\x2A\x2A\x55\x48\x89\x07\x48\x89\xE5\x5D\x48\x8B\x05\x2A\x2A\x2A\x2A"
+				/* src\game\server\sm_exports.cpp: CBaseTempEntity::CBaseTempEntity */
+				"windows64"	"@CBaseTempEntity"
+				"linux64"	""
 			}
 		}
 	}
@@ -72,7 +73,7 @@
 			{
 				"library"	"server"
 				// Fallback to IServerTools method instead on Windows, lest we add custom logic since it's no longer a thiscall on Windows in CS:GO
-				"linux64"	"\x55\x48\x89\xE5\x41\x55\x49\x89\xD5\x41\x54\x53\x48\x89\xFB\x48\x83\xEC\x08\x48\x85\xF6\x0F\x84\xBC\x00\x00\x00"
+				"linux64"	""
 			}
 		}
 	}
@@ -100,7 +101,7 @@
 			 * the expected code. A pointer to sv (IServer interface) is used
 			 * here.
 			 */
-			"CreateFakeClient_Windows64"	"\x55\x8B\xEC\x56\xFF\x2A\x2A\xB9\x2A\x2A\x2A\x2A\xE8\x2A\x2A\x2A\x2A\x8B"
+			"CreateFakeClient_Windows64"	"\x40\x53\x48\x83\xEC\x20\x48\x8D\x0D\x2A\x2A\x2A\x2A\xE8\x2A\x2A\x2A\x2A\x48\x8B\xD8\x48\x85\xC0\x75\x06\x48\x83\xC4\x20\x5B\xC3"
 			"CreateFakeClient_Linux64"	"\x55\x48\x89\xE5\x53\x48\x83\xEC\x08\x48\x8B\x3D\x2A\x2A\x2A\x2A\xE8"
 			"CreateFakeClient_Mac64"	"\x55\x48\x89\xE5\x53\x50\x48\x8D\x3D\x2A\x2A\x2A\x2A\x48\x8B\x07\xFF\x90\x78"
 		}
@@ -110,8 +111,8 @@
 			/* Offset into IVEngineServer::CreateFakeClient */
 			"sv"
 			{
-				"windows64"	"8"
-				"linux64"	"12"
+				"windows64"	"9"
+				"linux64"	""
 			}
 		}
 	}
@@ -125,13 +126,21 @@
 			"EntityFactoryFinder"
 			{
 				"library"	"server"
-				"windows64"	"\xA1\x2A\x2A\x2A\x2A\xB9\x2A\x2A\x2A\x2A\x53\xFF\x50\x2A\xC7"
+			}
+			
+			/* CEntityFactoryDictionary *EntityFactoryDictionary(): returns &s_EntityFactory
+			 * (a function-local static object), which is what the sdktools fallback calls. */
+			"EntityFactory"
+			{
+				"library"	"server"
+				/* src\game\server\sm_exports.cpp: EntityFactoryDictionary */
+				"windows64"	"@EntityFactory"
 			}
 			
 			"EntityFactoryCaller"
 			{
 				"library"	"server"
-				"linux64"	"\x55\x48\x89\xE5\x53\x48\x89\xFB\x48\x83\xEC\x08\xE8\x2A\x2A\x2A\x2A\x48\x89\xDE\x48\x8B\x10\x48\x89\xC7\xFF\x52\x08"
+				"linux64"	""
 			}
 		}
 		
@@ -139,11 +148,10 @@
 		{
 			"EntityFactoryOffset"
 			{
-				"windows64" 	"1"
 			}
 			"EntityFactoryCallOffset"
 			{
-				"linux64"	"13"
+				"linux64"	""
 			}
 		}
 	}
@@ -156,8 +164,9 @@
 			"FireOutput"
 			{
 				"library"	"server"
-				"windows64"	"\x55\x8B\xEC\x83\x2A\x2A\x81\xEC\x2A\x2A\x2A\x2A\x8B\xC1\x53\x56\x57\x8B\x2A\x2A\x89\x2A\x2A\x2A\x33"
-				"linux64"	"\x55\x48\x89\xE5\x41\x57\x41\x56\x49\x89\xF6\x41\x55\x41\x54\x49\x89\xCC\x53"
+				/* src\game\server\sm_exports.cpp: CBaseEntityOutput::FireOutput */
+				"windows64"	"@FireOutput"
+				"linux64"	""
 			}
 		}
 	}
@@ -170,8 +179,9 @@
 			"LookupAttachment"
 			{
 				"library"	"server"
-				"windows64"	"\x55\x8B\xEC\x57\x8B\xF9\x83\xBF\xC0\x04\x00\x00\x00\x75\x2A\xA1\x2A\x2A\x2A\x2A\x56\x8B\x30\x8B\x07\xFF\x50\x18\x8B\x0D\x2A\x2A\x2A\x2A\x50\xFF\x56\x04\x5E\x85\xC0\x74\x2A\x8B\xCF\xE8\x2A\x2A\x2A\x2A\x8B\x8F\xC0\x04\x00\x00\x5F\x85\xC9\x74\x2A\x83\x39\x00\x74\x2A\x8B\x55\x08\xE8\x2A\x2A\x2A\x2A"
-				"linux64"	"\x55\x48\x89\xE5\x53\x48\x89\xFB\x48\x83\xEC\x18\x48\x8B\xBF\x28\x06\x00\x00\x48\x85\xFF\x74\x2A\x48\x83\x3F\x00\x74\x2A\xE8\x2A\x2A\x2A\x2A"
+				/* src\game\server\sm_exports.cpp: CBaseAnimating::LookupAttachment */
+				"windows64"	"@LookupAttachment"
+				"linux64"	""
 			}
 		}
 	}
@@ -191,7 +201,7 @@
 			{
 				/* Not 100% sure on this, why would windows change and not linux - TEST ME */
 				"windows64"	"31"
-				"linux64"	"69"
+				"linux64"	""
 			}
 			/**
 			 * CBaseClient::SetName(char  const*);
@@ -201,7 +211,7 @@
 			"SetClientName"
 			{
 				"windows64"	"30"
-				"linux64"	"68"
+				"linux64"	""
 			}
 			/**
 			 * Offset into CBaseClient - Used by CBaseServer::UpdateUserSettings to determine when changes have been made.
@@ -213,8 +223,8 @@
 			 */
 			"InfoChanged"
 			{
-				"windows64"	"488"
-				"linux64"	"600"
+				"windows64"	"624"
+				"linux64"	""
 			}
 		}
 	}
@@ -231,87 +241,87 @@
 			"SetOwnerEntity"
 			{
 				"windows64"	"19"
-				"linux64"	"20"
+				"linux64"	""
 			}
 			"GiveNamedItem"
 			{
-				"windows64"	"458"
-				"linux64"	"459"
+				"windows64"	"452"
+				"linux64"	""
 			}
 			"RemovePlayerItem"
 			{
-				"windows64"	"297"
-				"linux64"	"298"
+				"windows64"	"296"
+				"linux64"	""
 			}
 			"Weapon_GetSlot"
 			{
-				"windows64"	"293"
-				"linux64"	"294"
+				"windows64"	"292"
+				"linux64"	""
 			}
 			"Ignite"
 			{
-				"windows64"	"227"
-				"linux64"	"228"
+				"windows64"	"226"
+				"linux64"	""
 			}
 			"Extinguish"
 			{
-				"windows64"	"230"
-				"linux64"	"231"
+				"windows64"	"229"
+				"linux64"	""
 			}
 			"Teleport"
 			{
 				"windows64"	"114"
-				"linux64"	"115"
+				"linux64"	""
 			}
 			"CommitSuicide"
 			{
-				"windows64"	"508"
-				"linux64"	"508"
+				"windows64"	"502"
+				"linux64"	""
 			}
 			"GetVelocity"
 			{
 				"windows64"	"140"
-				"linux64"	"141"
+				"linux64"	""
 			}
 			"EyeAngles"
 			{
 				"windows64"	"131"
-				"linux64"	"132"
+				"linux64"	""
 			}
 			"AcceptInput"
 			{
 				"windows64"	"41"
-				"linux64"	"42"
+				"linux64"	""
 			}
 			"SetEntityModel"
 			{
 				"windows64"	"27"
-				"linux64"	"28"
+				"linux64"	""
 			}
 			"WeaponEquip"
 			{
-				"windows64"	"286"
-				"linux64"	"287"
+				"windows64"	"285"
+				"linux64"	""
 			}
 			"Activate"
 			{
 				"windows64"	"38"
-				"linux64"	"39"
+				"linux64"	""
 			}
 			"PlayerRunCmd"
 			{
-				"windows64"	"478"
-				"linux64"	"479"
+				"windows64"	"472"
+				"linux64"	""
 			}
 			"GiveAmmo"
 			{
-				"windows64"	"279"
-				"linux64"	"280"
+				"windows64"	"278"
+				"linux64"	""
 			}
 			"GetAttachment"
 			{
-				"windows64"	"222"
-				"linux64"	"223"
+				"windows64"	"221"
+				"linux64"	""
 			}
 		}
 		"Signatures"
@@ -323,7 +333,8 @@
 			"WriteBaselines"
 			{
 				"library"	"engine"
-				"windows64"	"\x55\x8B\xEC\x83\xEC\x60\x53\x8B\xD9\x8B\x0D\x2A\x2A\x2A\x2A\x56\x57\x89\x5D\xF8\x8B\x81\x2A\x2A\x2A\x2A\x89\x45\xF4\x85\xC0"
+				/* src\engine\sm_exports.cpp: CNetworkStringTableContainer::WriteBaselines */
+				"windows64"	"@WriteBaselines"
 			}
 		}
 	}

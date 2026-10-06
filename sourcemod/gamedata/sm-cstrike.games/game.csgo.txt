@@ -23,57 +23,57 @@
 			"WeaponName"
 			{
 				"windows64"		"4"
-				"linux64"		"8"
+				"linux64"		""
 			}
 			// In HandleCommand_Buy_Internal
 			// -*(_DWORD *)(v34 + 8) in ida 7 -v34[52]
 			"WeaponPrice"
 			{
 				"windows64"		"208"
-				"linux64"		"328"
+				"linux64"		""
 			}
 			//Offset into CheckRestartRound
 			"CTTeamScoreOffset"
 			{
 				"windows64"	"174"
-				"linux64"	"143"
+				"linux64"	""
 			}
 			//Offset into CheckRestartRound
 			"TTeamScoreOffset"
 			{
 				"windows64"	"201"
-				"linux64"	"174"
+				"linux64"	""
 			}
 			//Offset into HandleCommand_Buy_Internal
 			"CCSPlayerInventoryOffset"
 			{
 				"windows64"	"57"
-				"linux64"	"107"
+				"linux64"	""
 			}
 			"GetItemInLoadout"
 			{
 				"windows64"		"42"
-				"linux64"	"9"
+				"linux64"	""
 			}
 			"GetItemDefintionByName" //_ZN15CEconItemSchema23GetItemDefinitionByNameEPKc
 			{
 				"windows64"		""
-				"linux64"		"41"
+				"linux64"		""
 			}
 			// Search for "%s (ID %llu) at backpack slot %d" (CCSPlayerInventory::DumpInventoryToConsole(bool))
 			// Jump to the vtable 2 functions above calls CCStrike15ItemDefinition::GetLoadoutSlot(CCStrike15ItemDefinition *this, int)
 			// This is an offset into CCStrike15ItemDefinition that contains the loadoutslot IGNORING the team param (the second param in the function)
 			"LoadoutSlotOffset"
 			{
-				"windows64"	"588"
-				"linux64"	"908"
+				"windows64"	"912"
+				"linux64"	""
 			}
 			// Offset into CEconItemSchema * to a hashmap of all itemdefs
 			// Offset can be found in... GetItemDefinitionMutable (easy to get offset on windows should be the same)
 			"ItemDefHashOffset"
 			{
-				"windows64"	"172"
-				"linux64"	"232"
+				"windows64"	"232"
+				"linux64"	""
 			}
 		}
 		"Signatures"
@@ -81,59 +81,62 @@
 			"GetItemSchema"
 			{
 				"library"	"server"
-				"windows64"	"\xA1\x2A\x2A\x2A\x2A\x85\xC0\x75\x2A\xA1\x2A\x2A\x2A\x2A\x56\x68\x2A\x2A\x00\x00\x8B"
-				"linux64"	"\x55\x48\x89\xE5\xE8\x2A\x2A\x2A\x2A\x5D\x48\x83\xC0\x08\xC3"
+				/* CEconItemSystem *ItemSystem() : the caller (util_cstrike.cpp) adds sizeof(void*)
+				 * to get at CEconItemSchema on Windows.  Matching GEconItemSchema() instead would
+				 * double-apply that offset. */
+				"windows64"	"@GetItemSchema"
+				"linux64"	""
 			}
 			"RoundRespawn"
 			{
 				"library"	"server"
-				"windows64"	"\x55\x8B\xEC\x83\xEC\x0C\x53\x56\x57\x8B\xF9\x8B\x0D\x2A\x2A\x2A\x2A\x8B\x01"
-				"linux64"	"\x55\x48\x89\xE5\x41\x57\x41\x56\x41\x55\x41\x54\x53\x48\x89\xFB\x48\x83\xEC\x18\x4C\x8B\x25\x85\x17\xB4\x00"
+				"windows64"	"@RoundRespawn"
+				"linux64"	""
 			}
 			"SwitchTeam"
 			{
 				"library"	"server"
-				"windows64"		"\x2A\x2A\x2A\x2A\x2A\x2A\x83\xE4\xF8\x83\xC4\x04\x55\x8B\x6B\x04\x89\x6C\x24\x04\x8B\xEC\x83\xEC\x34\x56"
-				"linux64"	"\x55\x48\x89\xE5\x41\x57\x41\x56\x41\x55\x41\x54\x49\x89\xFC\x89\xF7\x53\x89\xF3"
+				"windows64"		"@SwitchTeam"
+				"linux64"	""
 			}
 			"HandleCommand_Buy_Internal"//Wildcard first 6 bytes for getting address for weapon price.
 			{
 				"library"		"server"
-				"windows64"		""
-				"linux64"		"\x2A\x2A\x2A\x2A\x2A\x2A\x41\x56\x41\x89\xCE\x41\x55\x49\x89\xD5\x41\x54\x41\x89\xF4"
+				"windows64"		"@HandleCommand_Buy_Internal"
+				"linux64"		""
 			}
 			"CSWeaponDropBB" //Revert back to using CSWeaponDrop(weapon, bool, bool)
 			{
 				"library"		"server"
-				"windows64"		""
-				"linux64"		"\x2A\x2A\x2A\x2A\x2A\x2A\x41\x89\xCE\x41\x55\x41\x89\xD5\x41\x54\x49\x89\xF4"
+				"windows64"		"@CSWeaponDropBB"
+				"linux64"		""
 			}
 			"TerminateRound"
 			{
 				"library"		"server"
-				"windows64"		"\x55\x8B\xEC\x83\xE4\xF8\x83\xEC\x6C\x53\x56\x8B\xF1\xF3\x0F\x11\x4C\x24\x24"
-				//"linux64"		"\x55\x48\x89\xE5\x41\x57\x41\x56\x49\x89\xFE\x41\x55\x41\x54\x53\x48\x81\xEC\x98\x00\x00\x00\x89\xB5\x68\xFF\xFF\xFF"
+				"windows64"		"@TerminateRound"
+				//"linux64"		""
 			}
 			//In CS:GO this is actually CCSGameRules::CheckRestartRound(void) but to keep same gamedata as cs:s.
 			"CheckWinLimit"
 			{
 				"library"	"server"
-				"windows64"	"\x55\x8B\xEC\x83\xE4\xF8\x83\xEC\x2A\x53\x8B\xD9\x8B\x0D\x2A\x2A\x2A\x2A\x56\x57\x81\xF9"
-				"linux64"	"\x55\x48\x89\xE5\x41\x57\x41\x56\x41\x55\x41\x54\x53\x48\x89\xFB\x48\x83\xEC\x58\x64\x48\x8B\x04\x25\x28\x00\x00\x00\x48\x89\x45\xC8\x31\xC0\x4C\x8B\x2D\x46\xD3\xBB\x00"
+				"windows64"	"@CheckWinLimit"
+				"linux64"	""
 			}
 			"SetModelFromClass"
 			{
 				"library"	"server"
-				"windows64"	"\x53\x56\x57\x8B\xF9\x8B\x87\x14\x03\x00\x00"
-				"linux64"	"\x55\x48\x89\xE5\x41\x55\x41\x54\x53\x48\x89\xFB\x48\x83\xEC\x18\xE8\x2A\x2A\x2A\x2A\x83\xF8\x02"
+				"windows64"	"@SetModelFromClass"
+				"linux64"	""
 			}
 			//GetCCSWeaponData Found in HandleCommand_Buy_Internal
 			//Uses an econitemview
 			"GetCCSWeaponData"
 			{
 				"library"	"server"
-				"windows64"	"\x85\xC9\x75\x2A\x33\xC0\xC3\xE8\x2A\x2A\x2A\x2A\x8B"
-				"linux64"	"\x48\x85\xFF\x74\x2A\x55\x48\x89\xE5\xE8\x2A\x2A\x2A\x2A\x5D\x48\x89\xC7"
+				"windows64"	"@GetCCSWeaponData"
+				"linux64"	""
 			}
 		}
 	}
@@ -150,7 +153,7 @@
 			"Assists"
 			{
 				"windows64"	"4"
-				"linux64"	"4"
+				"linux64"	""
 			}
 		}
 	}
@@ -167,7 +170,7 @@
 			"CScore"
 			{
 				"windows64"	"51"
-				"linux64"	"51"
+				"linux64"	""
 			}
 		}
 	}
@@ -184,7 +187,7 @@
 			"MVPs"
 			{
 				"windows64"	"11"
-				"linux64"	"11"
+				"linux64"	""
 			}
 		}
 	}
@@ -209,12 +212,12 @@
 			"ClanTagSize"
 			{
 				"windows64"	"16"
-				"linux64"	"16"
+				"linux64"	""
 			}
 			"ClanTag"
 			{
 				"windows64"	"140"
-				"linux64"	"140"
+				"linux64"	""
 			}
 		}
 	}
@@ -233,7 +236,7 @@
 				"windows64"
 				{
 					"signature"	"NET_SendPacket"
-					"offset"	"4"
+					"offset"	"46"
 				}
 				"linux64"
 				{
@@ -250,8 +253,8 @@
 				"library"	"engine"
 				// "[NET] Cannot send %d-byte packet to %s.  MTU is %u.  %02x %02x %02x %02x %02x\n"
 				// _Z14NET_SendPacketP11INetChanneliRK10ns_addressPKhiP8bf_writebj
-				"windows64"	"\x8B\xFA\x81\xFB\xB0\x04\x00\x00\x7E"
-				"linux64"	"\x31\xC0\x81\xF9\xB0\x04\x00\x00\x0F"
+				"windows64"	"@NET_SendPacket"
+				"linux64"	""
 			}
 		}
 	}

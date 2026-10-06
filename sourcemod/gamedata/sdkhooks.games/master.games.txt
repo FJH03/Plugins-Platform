@@ -11,10 +11,6 @@
 
 "Game Master"
 {
-	"common.games.txt"
-	{
-	}
-
 	"engine.csgo.txt"
 	{
 		"engine"	"csgo"

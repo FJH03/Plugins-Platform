@@ -23,7 +23,7 @@
 			"CSendPropExtra_UtlVector::m_Offset"
 			{
 				"windows64"		"16"
-				"linux64"			"16"
+				"linux64"			""
 			}
 		}
 	}
@@ -57,7 +57,7 @@
 			"GetDataDescMap"
 			{
 				"windows64"		"13"
-				"linux64"			"14"
+				"linux64"			""
 			}
 		}
 	}
@@ -99,7 +99,7 @@
 			"GetDataDescMap"
 			{
 				"windows64"		"11"
-				"linux64"		"12"
+				"linux64"		""
 			}
 		}
 	}
