@@ -15,8 +15,8 @@
 	{
 	}
 
-	"engine.ep2valve.txt"
+	"engine.csgo.txt"
 	{
-		"engine"	"orangebox_valve"
+		"engine"	"csgo"
 	}
 }

@@ -1177,7 +1177,9 @@ static cell_t KeyValues_Merge(IPluginContext *pContext, const cell_t *params)
 		return pContext->ThrowNativeError("Invalid key value handle %x (error %d)", hndl_other, herr);
 	}
 
-	pStk_this->pCurRoot.front()->RecursiveMergeKeyValues(pStk_other->pCurRoot.front());
+	/* RecursiveMergeKeyValues is private in the 2019 SDK; MergeFrom() is the
+	 * public entry point that performs the same recursive merge. */
+	pStk_this->pCurRoot.front()->MergeFrom(pStk_other->pCurRoot.front());
 
 	return 1;
 #endif

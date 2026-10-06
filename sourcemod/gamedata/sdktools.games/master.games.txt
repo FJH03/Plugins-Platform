@@ -15,13 +15,8 @@
 	{
 	}
 
-	"engine.ep2valve.txt"
+	"engine.csgo.txt"
 	{
-		"engine"	"orangebox_valve"
-	}
-	
-	"game.cstrike.txt"
-	{
-		"game"		"cstrike"
+		"engine"	"csgo"
 	}
 }

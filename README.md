@@ -14,15 +14,15 @@ mkdir build
 cd build
 ```
 
-You can configure the build Metamod:Source for linux css amd64:
+You can configure the build Metamod:Source for linux csgo amd64:
 ```
-python3 ../configure.py --sdks css --target x86_64 --enable-optimize
+python3 ../configure.py --sdks csgo --target x86_64 --enable-optimize
 ```
 
-Configure the build Metamod:Source for pc css amd64:
+Configure the build Metamod:Source for pc csgo amd64:
 ```
 chcp 65001
-py ../configure.py -s css --target x86_64 --enable-optimize
+py ../configure.py -s csgo --target x86_64 --enable-optimize
 ```
 
 ---
@@ -36,15 +36,15 @@ mkdir build
 cd build
 ```
 
-You can configure the build Sourcemod for linux css amd64:
+You can configure the build Sourcemod for linux csgo amd64:
 ```
-python3 ../configure.py --sdks css --target x86_64 --no-mysql --enable-optimize
+python3 ../configure.py --sdks csgo --target x86_64 --no-mysql --enable-optimize
 ```
 
-Configure the build Sourcemod for pc css amd64:
+Configure the build Sourcemod for pc csgo amd64:
 ```
 chcp 65001
-py ../configure.py -s css --target x86_64 --no-mysql --enable-optimize
+py ../configure.py -s csgo --target x86_64 --no-mysql --enable-optimize
 ```
 
 Common build method:

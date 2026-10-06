@@ -161,7 +161,8 @@ static cell_t CS_RespawnPlayer(IPluginContext *pContext, const cell_t *params)
 
 static cell_t CS_SwitchTeam(IPluginContext *pContext, const cell_t *params)
 {
-#if SOURCE_ENGINE != SE_CSGO || !defined(WIN32)
+/* Win64 CS:GO uses the call wrapper too: inline __asm is x86-only. */
+#if SOURCE_ENGINE != SE_CSGO || !defined(WIN32) || defined(_WIN64)
 	static ICallWrapper *pWrapper = NULL;
 	if (!pWrapper)
 	{
@@ -329,7 +330,7 @@ static cell_t CS_TerminateRound(IPluginContext *pContext, const cell_t *params)
 	ArgBuffer<void*, float, int> vstk(gamerules, sp_ctof(params[1]), reason);
 
 	pWrapper->Execute(vstk, NULL);
-#elif SOURCE_ENGINE == SE_CSGO && !defined(WIN32)
+#elif SOURCE_ENGINE == SE_CSGO && (!defined(WIN32) || defined(_WIN64))
 	static ICallWrapper *pWrapper = NULL;
 
 	if (!pWrapper)

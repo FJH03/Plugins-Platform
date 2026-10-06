@@ -9,11 +9,14 @@
  * For more information, see http://wiki.alliedmods.net/Gamedata_Updating_(SourceMod)
  */
 
-
 "Game Master"
 {
-	"engine.ep2v.txt"
+	"common.games.txt"
 	{
-		"engine"	"orangebox_valve"
+	}
+
+	"engine.csgo.txt"
+	{
+		"engine"	"csgo"
 	}
 }

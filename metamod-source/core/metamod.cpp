@@ -36,6 +36,7 @@
 #include "metamod_util.h"
 #include "metamod_console.h"
 #include "provider/provider_base.h"
+#include "mm_cctype_compat.h"
 
 #define X64_SUFFIX ".x64"
 

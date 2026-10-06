@@ -135,7 +135,7 @@ DETOUR_DECL_MEMBER2(DetourTerminateRound, void, float, delay, int, reason)
 		DETOUR_MEMBER_CALL(DetourTerminateRound)(delay, reason);
 		return;
 	}
-#elif SOURCE_ENGINE == SE_CSGO && !defined(WIN32)
+#elif SOURCE_ENGINE == SE_CSGO && (!defined(WIN32) || defined(_WIN64))
 DETOUR_DECL_MEMBER4(DetourTerminateRound, void, float, delay, int, reason, int, unknown, int, unknown2)
 {
 	if (g_pIgnoreTerminateDetour)
@@ -194,7 +194,7 @@ DETOUR_DECL_MEMBER3(DetourTerminateRound, void, int, reason, int, unknown, int, 
 		return DETOUR_MEMBER_CALL(DetourTerminateRound)(delay, reason);
 
 	return DETOUR_MEMBER_CALL(DetourTerminateRound)(orgdelay, orgreason);
-#elif SOURCE_ENGINE == SE_CSGO && !defined(WIN32)
+#elif SOURCE_ENGINE == SE_CSGO && (!defined(WIN32) || defined(_WIN64))
 	if (result == Pl_Changed)
 		return DETOUR_MEMBER_CALL(DetourTerminateRound)(delay, reason, unknown, unknown2);
 

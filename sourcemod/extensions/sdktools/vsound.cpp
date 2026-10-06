@@ -36,8 +36,8 @@
 SH_DECL_HOOK8_void(IVEngineServer, EmitAmbientSound, SH_NOATTRIB, 0, int, const Vector &, const char *, float, soundlevel_t, int, int, float);
 
 #if SOURCE_ENGINE == SE_CSGO || SOURCE_ENGINE == SE_BLADE || SOURCE_ENGINE == SE_MCV
-SH_DECL_HOOK18(IEngineSound, EmitSound, SH_NOATTRIB, 0, int, IRecipientFilter &, int, int, const char *, unsigned int, const char *, float, float, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, void *);
-SH_DECL_HOOK18(IEngineSound, EmitSound, SH_NOATTRIB, 1, int, IRecipientFilter &, int, int, const char *, unsigned int, const char *, float, soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, void *);
+SH_DECL_HOOK18(IEngineSound, EmitSound, SH_NOATTRIB, 0, int, IRecipientFilter &, int, int, const char *, unsigned int, const char *, float, float, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, const CSoundParameters *);
+SH_DECL_HOOK18(IEngineSound, EmitSound, SH_NOATTRIB, 1, int, IRecipientFilter &, int, int, const char *, unsigned int, const char *, float, soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, const CSoundParameters *);
 #elif SOURCE_ENGINE >= SE_PORTAL2
 SH_DECL_HOOK17(IEngineSound, EmitSound, SH_NOATTRIB, 0, int, IRecipientFilter &, int, int, const char *, unsigned int, const char *, float, float, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int);
 SH_DECL_HOOK17(IEngineSound, EmitSound, SH_NOATTRIB, 1, int, IRecipientFilter &, int, int, const char *, unsigned int, const char *, float, soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int);
@@ -321,7 +321,7 @@ uint32 GenerateSoundEntryHash(char const *pSoundEntry)
 int SoundHooks::OnEmitSound(IRecipientFilter &filter, int iEntIndex, int iChannel, const char *pSoundEntry, unsigned int nSoundEntryHash, const char *pSample, 
 							 float flVolume, soundlevel_t iSoundlevel, int nSeed, int iFlags, int iPitch, const Vector *pOrigin, 
 							 const Vector *pDirection, CUtlVector<Vector> *pUtlVecOrigins, bool bUpdatePositions, 
-							 float soundtime, int speakerentity, void *pUnknown)
+							 float soundtime, int speakerentity, const CSoundParameters *pUnknown)
 #elif SOURCE_ENGINE >= SE_PORTAL2
 int SoundHooks::OnEmitSound(IRecipientFilter &filter, int iEntIndex, int iChannel, const char *pSoundEntry, unsigned int nSoundEntryHash, const char *pSample, 
 							 float flVolume, soundlevel_t iSoundlevel, int nSeed, int iFlags, int iPitch, const Vector *pOrigin, 
@@ -440,7 +440,7 @@ void SoundHooks::OnEmitSound(IRecipientFilter &filter, int iEntIndex, int iChann
 					MRES_IGNORED,
 					-1,
 					static_cast<int (IEngineSound::*)(IRecipientFilter &, int, int, const char*, unsigned int, const char*, float, soundlevel_t, 
-					int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, void *)>(&IEngineSound::EmitSound), 
+					int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, const CSoundParameters *)>(&IEngineSound::EmitSound), 
 					(crf, iEntIndex, iChannel, soundEntry, nSoundEntryHash, buffer, flVolume, iSoundlevel, nSeed, iFlags, iPitch, pOrigin,
 					pDirection, pUtlVecOrigins, bUpdatePositions, soundtime, speakerentity, nullptr)
 					);
@@ -484,7 +484,7 @@ void SoundHooks::OnEmitSound(IRecipientFilter &filter, int iEntIndex, int iChann
 int SoundHooks::OnEmitSound2(IRecipientFilter &filter, int iEntIndex, int iChannel, const char *pSoundEntry, unsigned int nSoundEntryHash, const char *pSample, 
 							 float flVolume, float flAttenuation, int nSeed, int iFlags, int iPitch, const Vector *pOrigin, 
 							 const Vector *pDirection, CUtlVector<Vector> *pUtlVecOrigins, bool bUpdatePositions, 
-							 float soundtime, int speakerentity, void *pUnknown)
+							 float soundtime, int speakerentity, const CSoundParameters *pUnknown)
 #elif SOURCE_ENGINE >= SE_PORTAL2
 int SoundHooks::OnEmitSound2(IRecipientFilter &filter, int iEntIndex, int iChannel, const char *pSoundEntry, unsigned int nSoundEntryHash, const char *pSample, 
 							 float flVolume, float flAttenuation, int nSeed, int iFlags, int iPitch, const Vector *pOrigin, 
@@ -604,7 +604,7 @@ void SoundHooks::OnEmitSound2(IRecipientFilter &filter, int iEntIndex, int iChan
 					MRES_IGNORED,
 					-1,
 					static_cast<int (IEngineSound::*)(IRecipientFilter &, int, int, const char *, unsigned int, const char *, float, float, 
-					int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, void *)>(&IEngineSound::EmitSound), 
+					int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, const CSoundParameters *)>(&IEngineSound::EmitSound), 
 					(crf, iEntIndex, iChannel, soundEntry, nSoundEntryHash, buffer, flVolume, SNDLVL_TO_ATTN(static_cast<soundlevel_t>(sndlevel)),
 					nSeed, iFlags, iPitch, pOrigin, pDirection, pUtlVecOrigins, bUpdatePositions, soundtime, speakerentity, pUnknown)
 					);
@@ -913,7 +913,7 @@ static cell_t EmitSound(IPluginContext *pContext, const cell_t *params)
 			{
 				SH_CALL(enginesoundPatch, 
 					static_cast<int (IEngineSound::*)(IRecipientFilter &, int, int, const char*, unsigned int, const char*, float, 
-					soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, void *)>
+					soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, const CSoundParameters *)>
 
 					(&IEngineSound::EmitSound))
 					(crf, 
@@ -1091,7 +1091,7 @@ static cell_t EmitSound(IPluginContext *pContext, const cell_t *params)
 		{
 			SH_CALL(enginesoundPatch, 
 				static_cast<int (IEngineSound::*)(IRecipientFilter &, int, int, const char*, unsigned int, const char*, float, 
-				soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, void *)>
+				soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, const CSoundParameters *)>
 				(&IEngineSound::EmitSound))
 				(crf, 
 				entity, 
@@ -1376,7 +1376,7 @@ static cell_t EmitSoundEntry(IPluginContext *pContext, const cell_t *params)
 #if SOURCE_ENGINE == SE_CSGO || SOURCE_ENGINE == SE_BLADE || SOURCE_ENGINE == SE_MCV
 SH_CALL(enginesoundPatch,
 					static_cast<int (IEngineSound::*)(IRecipientFilter &, int, int, const char*, unsigned int, const char*, float,
-					soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, void *)>
+					soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, const CSoundParameters *)>
 					(&IEngineSound::EmitSound))(crf, player[0], channel, soundEntry, soundEntryHash, sample, vol, (soundlevel_t)level, seed,
 					flags, pitch, pOrigin, pDir, pOrigVec, updatePos, soundtime, speakerentity, nullptr);
 #else
@@ -1400,7 +1400,7 @@ SH_CALL(enginesoundPatch,
 #if SOURCE_ENGINE == SE_CSGO || SOURCE_ENGINE == SE_BLADE || SOURCE_ENGINE == SE_MCV
 			SH_CALL(enginesoundPatch,
 				static_cast<int (IEngineSound::*)(IRecipientFilter &, int, int, const char*, unsigned int, const char*, float,
-				soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, void *)>
+				soundlevel_t, int, int, int, const Vector *, const Vector *, CUtlVector<Vector> *, bool, float, int, const CSoundParameters *)>
 				(&IEngineSound::EmitSound))(crf, entity, channel, soundEntry, soundEntryHash, sample, vol, (soundlevel_t)level,
 				seed, flags, pitch, pOrigin, pDir, pOrigVec, updatePos, soundtime, speakerentity, nullptr);
 #else

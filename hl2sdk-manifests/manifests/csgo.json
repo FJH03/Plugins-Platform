@@ -1,0 +1,46 @@
+{
+    "name": "csgo",
+    "env_var": "HL2SDKCSGO",
+    "extension": "2.csgo",
+    "code": 23,
+    "define": "CSGO",
+    "steam": {
+        "app_id": 740
+    },
+    "platforms": {
+        "windows": [
+            "x86_64"
+        ]
+    },
+    "source2": false,
+    "msvc_prelude": "msvc_cctype.h",
+    "include_paths": [
+        "csgo-2019/public",
+        "csgo-2019/public/engine",
+        "csgo-2019/public/mathlib",
+        "csgo-2019/public/vstdlib",
+        "csgo-2019/public/tier0",
+        "csgo-2019/public/tier1",
+        "csgo-2019/public/toolframework",
+        "csgo-2019/public/game/server",
+        "csgo-2019/public/steam",
+        "csgo-2019/game/server",
+        "csgo-2019/game/shared",
+        "csgo-2019/common",
+        "csgo-2019/thirdparty/protobuf-2.5.0/src"
+    ],
+    "windows": {
+        "defines": [
+            "_GLIBCXX_USE_CXX11_ABI=0"
+        ],
+        "x86_64": {
+            "libs": [
+                "csgo-2019/lib/public/x64/tier0.lib",
+                "csgo-2019/lib/public/x64/vstdlib.lib",
+                "csgo-2019/lib/public/x64/mathlib.lib",
+                "csgo-2019/lib/public/x64/tier1.lib",
+                "csgo-2019/lib/public/x64/interfaces.lib"
+            ]
+        }
+    }
+}

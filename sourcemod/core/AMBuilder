@@ -142,5 +142,16 @@ for sdk_target in SM.sdk_targets:
         os.path.join(sdk['path'], 'public', 'engine', 'protobuf', 'engine_gcmessages.pb.cc'),
       ]
 
+    if sdk['name'] == 'csgo':
+      # The 2019 CS:GO SDK's usermessages protobuf source references the GC
+      # message definitions, so those translation units must be compiled too.
+      protobuf_dir = os.path.join(sdk['path'], 'public', 'game', 'shared', 'csgo', 'protobuf')
+      binary.sources += [
+        os.path.join(protobuf_dir, 'cstrike15_gcmessages.pb.cc'),
+        os.path.join(protobuf_dir, 'base_gcmessages.pb.cc'),
+        os.path.join(protobuf_dir, 'steammessages.pb.cc'),
+        os.path.join(protobuf_dir, 'engine_gcmessages.pb.cc'),
+      ]
+
 SM.binaries += builder.Add(project)
 

@@ -9,10 +9,17 @@
  * For more information, see http://wiki.alliedmods.net/Gamedata_Updating_(SourceMod)
  */
 
-"Game Master"
+"Games"
 {
-	"game.csgo.txt"
+	"#default"
 	{
-		"engine"	"csgo"
+		"Offsets"
+		{
+			"EntityListeners"
+			{
+				"windows64"	"65572"
+				"linux64"		"65572"
+			}
+		}
 	}
 }

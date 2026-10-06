@@ -32,6 +32,7 @@
 #include "metamod_util.h"
 #include "metamod_console.h"
 #include "metamod_plugins.h"
+#include "mm_cctype_compat.h"
 
 using namespace SourceMM;
 using namespace SourceHook;

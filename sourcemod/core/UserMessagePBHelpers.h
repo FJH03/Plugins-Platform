@@ -36,6 +36,12 @@
 #include <google/protobuf/descriptor.h>
 #include <amtl/am-string.h>
 
+/* windows.h maps GetMessage to GetMessageA, which breaks protobuf's
+ * Reflection::GetMessage below. */
+#ifdef GetMessage
+#undef GetMessage
+#endif
+
 #define GETCHECK_FIELD() \
 	const protobuf::FieldDescriptor *field = msg->GetDescriptor()->FindFieldByName(pszFieldName); \
 	if (!field)       \

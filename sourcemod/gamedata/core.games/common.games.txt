@@ -23,7 +23,7 @@
 			"CSendPropExtra_UtlVector::m_Offset"
 			{
 				"windows64"		"16"
-				"linux64"		"16"
+				"linux64"			"16"
 			}
 		}
 	}
@@ -44,12 +44,54 @@
 		}
 	}
 	
+	/* Original engine specifics */
+	"#default"
+	{
+		"#supported"
+		{
+			"engine"			"original"
+		}
+		
+		"Offsets"
+		{
+			"GetDataDescMap"
+			{
+				"windows64"		"13"
+				"linux64"			"14"
+			}
+		}
+	}
+	
+	/* Dark Messiah engine specifics */
+	"#default"
+	{
+		"#supported"
+		{
+			"engine"			"darkmessiah"
+		}
+		
+		"Keys"
+		{
+			"m_iHealth"			"m_fHealth"
+			"HintTextPreByte"	"yes"
+			"ChatSayText"		"yes"
+		}
+		
+		"Offsets"
+		{
+			"GetDataDescMap"
+			{
+				"windows64"		"12"
+			}
+		}
+	}
+	
 	/* OB/L4D engine specifics */
 	"#default"
 	{
 		"#supported"
 		{
-			"engine"			"orangebox_valve"
+			"engine"			"csgo"
 		}
 		
 		"Offsets"
@@ -61,13 +103,12 @@
 			}
 		}
 	}
-
-	/* Which games support ShowMenu? */
+	
 	"#default"
 	{
 		"#supported"
 		{
-			"game"					"cstrike"
+			"engine"				"csgo"
 		}
 
 		"Keys"
@@ -76,12 +117,12 @@
 		}
 	}
 	
-	/* Which games need a radio menu timeout? */
+	
 	"#default"
 	{
 		"#supported"
 		{
-			"game"					"cstrike"
+			"engine"				"csgo"
 		}
 		
 		"Keys"
@@ -97,7 +138,7 @@
 	{
 		"#supported"
 		{
-			"game"					"cstrike"
+			"game"					"csgo"
 		}
 		
 		"Keys"
@@ -106,13 +147,34 @@
 		}
 	}
 
-	"cstrike"
+	
+	"#default"
 	{
+		"#supported"
+		{
+			"engine"	"csgo"
+		}
+		
 		"Keys"
 		{
 			"GameExtension"		"game.cstrike"
 		}
 	}
+
+	
+	"#default"
+	{
+		"#supported"
+		{
+			"engine"	"csgo"
+		}
+		
+		"Keys"
+		{
+			"RadioMenuMaxPageItems"	"9"
+		}
+	}
+	
 
 
 	/**

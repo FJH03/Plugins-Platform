@@ -159,15 +159,21 @@ void RulesFix::OnNotifyConVarChanged(ConVar *pVar)
 	if (!bPatched)
 		return;
 
-	if (SteamGameServer())
+	/* VERSION_SAFE_STEAM_API_INTERFACES (csgo) hides the version-less
+	 * SteamGameServer() accessor in the 2019 SDK headers; use the
+	 * version-safe context object instead. */
+	CSteamGameServerAPIContext steamCtx;
+	steamCtx.Init();
+	ISteamGameServer *pGameServer = steamCtx.SteamGameServer();
+	if (pGameServer)
 	{
 		if (pVar->IsFlagSet(FCVAR_PROTECTED))
 		{
-			SteamGameServer()->SetKeyValue(pVar->GetName(), !pVar->GetString()[0] ? "0" : "1");
+			pGameServer->SetKeyValue(pVar->GetName(), !pVar->GetString()[0] ? "0" : "1");
 		}
 		else
 		{
-			SteamGameServer()->SetKeyValue(pVar->GetName(), pVar->GetString());
+			pGameServer->SetKeyValue(pVar->GetName(), pVar->GetString());
 		}
 	}
 }

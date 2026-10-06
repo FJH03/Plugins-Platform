@@ -1,1 +1,3 @@
-/source-engine-czero
+/hl2sdk-csgo/csgo-2019/
+/hl2sdk-csgo/*
+!/hl2sdk-csgo/.gitkeep

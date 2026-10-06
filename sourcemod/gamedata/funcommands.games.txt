@@ -24,4 +24,19 @@
 			"TeamUnknownBeaconColor"	"255,255,255,255"
 		}
 	}
+	
+	"csgo"
+	{
+		"Keys"
+		{
+			"SpriteBeam"		"sprites/laserbeam.vmt"
+			"SpriteBeam2"		"sprites/physbeam.vmt"
+			"SpriteExplosion"	""
+			"SpriteGlow"		"sprites/blueflare1.vmt"
+			"SpriteHalo"		"sprites/glow01.vmt"
+			
+			"SoundFinal"	"ui/arm_bomb.wav"
+			"SoundBoom"		"weapons/hegrenade/explode4.wav"
+		}
+	}
 }

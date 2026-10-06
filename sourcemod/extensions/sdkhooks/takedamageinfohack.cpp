@@ -93,35 +93,9 @@ CTakeDamageInfoHack::CTakeDamageInfoHack( CBaseEntity *pInflictor, CBaseEntity *
 #endif
 }
 
-#if SOURCE_ENGINE == SE_CSGO
-int CTakeDamageInfoHack::GetAttacker() const
-{
-	return m_CSGOAttacker.m_hHndl.IsValid() ? m_CSGOAttacker.m_hHndl.GetEntryIndex() : -1;
-}
-
-void CTakeDamageInfoHack::SetAttacker(CBaseEntity *pAttacker)
-{
-	m_CSGOAttacker.m_bNeedInit = false;
-	m_CSGOAttacker.m_hHndl = pAttacker;
-	m_CSGOAttacker.m_bIsWorld = true;
-
-	int entity = gamehelpers->EntityToBCompatRef(pAttacker);
-	IGamePlayer *player = playerhelpers->GetGamePlayer(entity);
-	if (player) {
-		m_CSGOAttacker.m_bIsWorld = false;
-		m_CSGOAttacker.m_bIsPlayer = true;
-		m_CSGOAttacker.m_iClientIndex = player->GetIndex();
-		m_CSGOAttacker.m_iUserId = player->GetUserId();
-
-		IPlayerInfo *playerinfo = player->GetPlayerInfo();
-		if (!playerinfo) {
-			return;
-		}
-		m_CSGOAttacker.m_iTeamChecked = playerinfo->GetTeamIndex();
-		m_CSGOAttacker.m_iTeamNum = playerinfo->GetTeamIndex();
-	}
-}
-#else
+/* The 2019 CS:GO SDK has no CSGOAttackerInfo (that was added in the newer
+ * upstream hl2sdk-csgo); the attacker is a plain EHANDLE like other Source 1
+ * games, so use the generic implementation below. */
 int CTakeDamageInfoHack::GetAttacker() const
 {
 	return m_hAttacker.IsValid() ? m_hAttacker.GetEntryIndex() : -1;
@@ -131,4 +105,3 @@ void CTakeDamageInfoHack::SetAttacker(CBaseEntity *pAttacker)
 {
 	CTakeDamageInfo::SetAttacker(pAttacker);
 }
-#endif

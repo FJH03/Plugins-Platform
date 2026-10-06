@@ -227,6 +227,18 @@ class SdkHelpers(object):
 
             if cxx.version >= 1900:
                 cxx.linkflags += ['legacy_stdio_definitions.lib']
+
+            # Optional per-SDK header force-included before every TU (/FI).
+            # Used by the leaked CS:GO 2019 SDK, whose strtools.h poisons the C
+            # ctype names and breaks <cctype> if an STL header comes after it.
+            prelude = sdk.get('msvc_prelude', None)
+            if prelude:
+                try:
+                    compat_root = os.path.dirname(__file__)
+                except NameError:
+                    compat_root = os.path.dirname(get_this_file_path())
+                prelude_path = os.path.abspath(os.path.join(compat_root, 'sdk_compat', prelude))
+                cxx.cflags += ['/FI' + prelude_path]
         else:
             cxx.defines += ['COMPILER_GCC', '_LINUX', 'LINUX', 'POSIX', 'GNUC']
 
