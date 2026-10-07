@@ -137,25 +137,20 @@
 			}
 		}
 		
-		"Addresses"
-		{
-			"EntityListenersPtr"
-			{
-				"windows64"
-				{
-					"signature"	"EntityListenersFinder"
-					"read"		"18"
-				}
-			}
-		}
-		
 		"Signatures"
 		{
-			// Find call to AddListenerEntity in CPhysSaveRestoreBlockHandler::PreRestore (virtual)
-			"EntityListenersFinder"
+			/* Self-built x64 server.dll exports these directly
+			 * (src\game\server\sm_exports.cpp); no byte pattern needed. */
+			"AddListenerEntity"
 			{
 				"library"	"server"
-				"windows64"	"\x55\x8B\xEC\x8B\x0D\x2A\x2A\x2A\x2A\x33\xC0\x56\x85\xC9\x7E\x32\x8B"
+				"windows64"	"@AddListenerEntity"
+			}
+			
+			"RemoveListenerEntity"
+			{
+				"library"	"server"
+				"windows64"	"@RemoveListenerEntity"
 			}
 		}
 	}
